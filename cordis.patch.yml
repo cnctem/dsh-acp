@@ -7,8 +7,9 @@
 # to quiescence, streams committed assistant text as `agent_message_chunk`, and
 # answers bridge-owned approval requests through one-shot client permissions.
 
-# Give the agent a coding persona. {{model}} and {{cwd}} are resolved by
-# dsh-system-prompt; tool plugins own their own guidance.
+# Give the agent a coding persona (fallback; each preset's own persona shadows
+# this when agent presets are mounted). {{model}} and {{cwd}} are resolved by
+# dsh-system-prompt.
 - id: system-prompt
   config:
     persona: >-
@@ -21,7 +22,94 @@
 - id: hmr
   disabled: true
 
+# ── the agent plane moves behind agent presets ─────────────────────────────
+#
+# The base keeps every model-facing row (tools, prompt sections, delegation
+# backends) on the HOST plane for the single-session TUI. The ACP server is
+# multi-session and lets each session mount one of the four agent presets
+# (standard / PTC / minimal / cordis) instead, so those rows are disabled here
+# and provided by each preset's own standing composition. The registries and
+# infra (sandbox, approval, persistence, model route, subagent registry,
+# skill/tool registries) stay on the host plane.
+
+- id: tool-bash
+  disabled: true
+
+- id: tool-pwsh
+  disabled: true
+
+- id: tool-jobs
+  disabled: true
+
+- id: tool-fs
+  disabled: true
+
+- id: tool-fs-search
+  disabled: true
+
+- id: tool-str-replace-editor
+  disabled: true
+
+- id: skill-filesystem
+  disabled: true
+
+- id: tool-skill
+  disabled: true
+
+- id: tool-goal
+  disabled: true
+
+- id: plan-mode
+  disabled: true
+
+- id: compaction-basic
+  disabled: true
+
+- id: command-compact
+  disabled: true
+
+- id: tool-result-pruner
+  disabled: true
+
+- id: tool-subagent-control
+  disabled: true
+
+- id: tool-subagent-list-agents
+  disabled: true
+
+- id: tool-subagent
+  disabled: true
+
+- id: tool-subagent-fork
+  disabled: true
+
+- id: workflow-worker-thread
+  disabled: true
+
+- id: tool-workflow
+  disabled: true
+
+- id: tool-ralph
+  disabled: true
+
+- id: agent-instructions
+  disabled: true
+
+- id: tool-todo
+  disabled: true
+
+- id: tool-web
+  disabled: true
+
+# The preset roster. The CLI auto-injects the shipped system root
+# (`config/agent-presets/` beside the installed app); the harness-home user
+# root (`$DSH_HOME/.agent-presets`) is included by default.
 - insert:
+    - id: agent-presets
+      name: '@deepseek-ai/dsh-agent-presets'
+      config:
+        default: standard
+
     - id: acp
       name: 'dsh-acp'
       config:

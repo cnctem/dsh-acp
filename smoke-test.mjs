@@ -73,6 +73,23 @@ ctx.provide('permissionPresets', {
   current: () => 'workspace-write',
   set: () => {},
 })
+ctx.provide('agentPresets', {
+  defaultId: 'standard',
+  async list() {
+    return [
+      { id: 'standard', name: '标准模式' },
+      { id: 'code', name: 'PTC 模式' },
+      { id: 'minimal', name: '极简模式' },
+      { id: 'cordis', name: '创造模式' },
+    ]
+  },
+  async mount() {
+    return { id: 'standard' }
+  },
+  async recompose(_ctx, id) {
+    return { id }
+  },
+})
 ctx.provide('sessionPersistence', {
   async list() {
     return persisted
@@ -160,6 +177,21 @@ check(
 check(
   created.result?.configOptions?.some((o) => o.id === 'permission' && o.options?.length === 3),
   'config should advertise a 3-way permission option',
+)
+check(
+  created.result?.configOptions?.some((o) => o.id === 'preset' && o.category === 'mode' && o.options?.length === 4),
+  'config should advertise a 4-way preset (mode) option',
+)
+check(
+  created.result?.configOptions?.find((o) => o.id === 'preset')?.currentValue === 'standard',
+  'default preset should be standard',
+)
+check(
+  created.result?.configOptions?.findIndex((o) => o.id === 'permission') <
+    created.result?.configOptions?.findIndex((o) => o.id === 'preset') &&
+    created.result?.configOptions?.findIndex((o) => o.id === 'preset') <
+      created.result?.configOptions?.findIndex((o) => o.id === 'model'),
+  'order should be permission, preset, model',
 )
 check(created.result?.models?.availableModels?.length === 1, 'one available model')
 check(created.result?.models?.currentModelId === 'deepseek-official/deepseek-v4-pro', 'current model id')
@@ -326,6 +358,15 @@ await send({ jsonrpc: '2.0', id: 16, method: 'session/set_config_option', params
 const modelResp = await readFrame()
 console.log('set model ->', JSON.stringify(modelResp.result))
 check(modelResp.result?.configOptions !== undefined, 'set model should return configOptions')
+
+await send({ jsonrpc: '2.0', id: 17, method: 'session/set_config_option', params: { sessionId, configId: 'preset', value: 'minimal' } })
+const presetResp = await readFrame()
+console.log('set preset ->', JSON.stringify(presetResp.result))
+check(presetResp.result?.configOptions !== undefined, 'set preset should return configOptions')
+check(
+  presetResp.result?.configOptions?.find((o) => o.id === 'preset')?.currentValue === 'minimal',
+  'preset should have switched to minimal',
+)
 
 console.log(failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures})`)
 process.exit(failures === 0 ? 0 : 1)
