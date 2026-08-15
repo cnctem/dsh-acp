@@ -102,17 +102,19 @@ API Key 沿用 dsh 的凭据体系（`$DSH_HOME/.credentials.yaml` 或 `DEEPSEEK
 ```json
 {
   "agent_servers": {
-    "dsh": {
+    "dsh-code": {
       "type": "custom",
       "command": "dsh",
       "args": ["--profile", "acp"],
       "env": {
-        "DSH_ACP_PRESET": "minimal"
+        "DSH_ACP_PRESET": "code"
       }
     }
   }
 }
 ```
+
+Zed 也支持同时为同一个 acp 设置多个入口，可以配置为不同名称实现与其他模式共存，在 “+“ 中展示为不同入口。
 
 不设 `DSH_ACP_PRESET` 就是 `standard`（标准模式）。4 个可选值：`standard`（标准）/ `code`（PTC）/ `minimal`（极简）/ `cordis`（创造）。
 
