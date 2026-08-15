@@ -154,6 +154,10 @@ check(
   'config should advertise a model option',
 )
 check(
+  created.result?.configOptions?.some((o) => o.id === 'thought_level' && o.category === 'thought_level' && o.options?.length === 2),
+  'config should advertise a thought_level option',
+)
+check(
   created.result?.configOptions?.some((o) => o.id === 'permission' && o.options?.length === 3),
   'config should advertise a 3-way permission option',
 )
