@@ -2,24 +2,30 @@
 
 一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）编写的 **Agent Client Protocol（ACP）** 服务，通过 **JSON-RPC 2.0 over stdio** 让 [Zed](https://zed.dev) 等 IDE 直接接入 dsh 智能体。
 
-它是对官方 `@deepseek-ai/dsh-acp`（`packages/acp/acp`，即仓库中的 *acp example*）的独立移植：作为 dsh 的一个 **profile bundle**，直接叠加在 `dsh-base` 上运行，无需改动 dsh 本体。
+它以官方 `@deepseek-ai/dsh-acp`（`packages/acp/acp`，即仓库中的 *acp example*）为骨架，作为 dsh 的一个 **profile bundle** 叠加在 `dsh-base` 上运行（无需改动 dsh 本体），并在其上补齐了对标 [`pi-acp`](https://github.com/svkozak/pi-acp) 的编辑器体验：token/思考流式、工具调用卡片与结构化 diff。
 
 ## 工作原理
 
 - dsh 启动 `acp` profile 后，`dsh-acp` 插件在 **stdin/stdout** 上打开一个 ACP `AgentSideConnection`，通过 `ctx.agents` 创建/驱动持久的 Agent 会话。
 - `session/new` → 为每个会话新建一个 dsh Agent（`cwd` 由客户端传入）。
-- `session/prompt` → 把文本块拼成一个用户消息，驱动 Agent 直到空闲（`whenIdle`），把**已提交的助手文本**作为 `agent_message_chunk` 流式返回。
+- `session/prompt` → 把文本块拼成一个用户消息，驱动 Agent 直到空闲（`whenIdle`），沿会话事件火线回传：
+  - `assistant/chunk` 的 `text-delta` → `agent_message_chunk`（token 逐字流式）
+  - `assistant/chunk` 的 `reasoning-delta` → `agent_thought_chunk`（思考流）
+  - `tool/call` → `tool_call`（工具卡片，含 kind、位置跳转、原始入参）
+  - `tool/result` → `tool_call_update`（completed/failed，含结果文本或**结构化 diff**）
 - `session/cancel` → 取消该会话的 Agent。
 - `session/request_permission` → 把 dsh 的 `approval/request`（沙箱越权等）以一次性 allow/reject 选项交给客户端裁决。
 - 复用 `dsh-base` 的完整能力：DeepSeek 模型路由、沙箱 bash/文件系统、工具（fs/fs-search/bash/subagent/workflow/todo/…）、会话持久化（JSONL）、压缩、子代理等。
 
+结构化 diff 优先取自 dsh 工具自带的 `tool/result.meta.diffs`（`write`/`edit` 已算好 hunk diff），`str_replace_editor` 则用执行前/后快照比对。提交文本作为兜底：某一步没有流式增量时才回退到 `assistant/message`，避免重复输出。
+
 stdout 只承载 ACP 帧，诊断信息走 `ctx.logger` → stderr。
 
-## 能力边界（与官方一致）
+## 能力边界
 
 - 仅**新会话**（不支持 load / list / resume / delete / fork）。
 - 仅**基线 prompt**（文本 + `resource_link`；图片/音频/embedded resource 会拒绝）。
-- 仅**已提交文本**：不流式输出 token 增量、reasoning、工具调用、plan、标题等（这些属于 UI/演示层）。
+- 不回传 plan、会话标题、usage 等（仍属日志/演示层）。
 - 单个 `cwd`，不支持 `mcpServers` 和 `additionalDirectories`。
 
 ## 安装
