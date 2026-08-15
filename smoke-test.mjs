@@ -61,6 +61,18 @@ ctx.provide('agents', {
 ctx.provide('agentDefaultModel', {
   currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-pro' }),
 })
+ctx.provide('llm', {
+  listProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek' }],
+  listModels: async (provider) => [{ id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider }],
+  resolveModelInfo: async (_provider, _model) => ({
+    reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' },
+  }),
+})
+ctx.provide('permissionPresets', {
+  names: ['read-only', 'workspace-write', 'danger-full-access'],
+  current: () => 'workspace-write',
+  set: () => {},
+})
 ctx.provide('sessionPersistence', {
   async list() {
     return persisted
@@ -134,8 +146,21 @@ await send({
 const created = await readFrame()
 const sessionId = created.result?.sessionId
 console.log('session/new ->', sessionId)
+console.log('session/new config ->', JSON.stringify({ configOptions: created.result?.configOptions, models: created.result?.models, modes: created.result?.modes }))
 check(typeof sessionId === 'string' && sessionId.length > 0, 'expected a sessionId')
 check(captured !== null, 'mock create should have been invoked')
+check(
+  created.result?.configOptions?.some((o) => o.id === 'model' && o.category === 'model'),
+  'config should advertise a model option',
+)
+check(
+  created.result?.configOptions?.some((o) => o.id === 'permission' && o.options?.length === 3),
+  'config should advertise a 3-way permission option',
+)
+check(created.result?.models?.availableModels?.length === 1, 'one available model')
+check(created.result?.models?.currentModelId === 'deepseek-official/deepseek-v4-pro', 'current model id')
+check(created.result?.modes?.availableModes?.length === 2, 'two thinking modes')
+check(created.result?.modes?.currentModeId === 'high', 'default thinking mode')
 
 // 3. Emit rich editor events through the session firehose.
 function emitEvent(type, data) {
@@ -276,6 +301,27 @@ check(deleted.result !== undefined, 'session/delete should succeed')
 await send({ jsonrpc: '2.0', id: 13, method: 'session/delete', params: { sessionId: 'does-not-exist' } })
 const deletedMissing = await readFrame()
 check(deletedMissing.result !== undefined, 'session/delete of an unknown id should be idempotent')
+
+// 8. session/set_mode (thinking strength) — emits current_mode_update before the response.
+await send({ jsonrpc: '2.0', id: 14, method: 'session/set_mode', params: { sessionId, modeId: 'low' } })
+const modeFrames = [await readFrame(), await readFrame()]
+for (const f of modeFrames) console.log('set_mode frame ->', JSON.stringify(f))
+const modeNotif = modeFrames.find((f) => f.method === 'session/update')
+const modeResp = modeFrames.find((f) => f.id === 14)
+check(modeNotif?.params?.update?.sessionUpdate === 'current_mode_update', 'set_mode should emit current_mode_update')
+check(modeNotif?.params?.update?.currentModeId === 'low', 'current_mode_update should carry the new mode')
+check(modeResp?.result !== undefined, 'set_mode should succeed')
+
+// 9. session/set_config_option (permission + model)
+await send({ jsonrpc: '2.0', id: 15, method: 'session/set_config_option', params: { sessionId, configId: 'permission', value: 'danger-full-access' } })
+const permResp = await readFrame()
+console.log('set permission ->', JSON.stringify(permResp.result))
+check(permResp.result?.configOptions !== undefined, 'set permission should return configOptions')
+
+await send({ jsonrpc: '2.0', id: 16, method: 'session/set_config_option', params: { sessionId, configId: 'model', value: 'deepseek-official/deepseek-v4-pro' } })
+const modelResp = await readFrame()
+console.log('set model ->', JSON.stringify(modelResp.result))
+check(modelResp.result?.configOptions !== undefined, 'set model should return configOptions')
 
 console.log(failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures})`)
 process.exit(failures === 0 ? 0 : 1)
