@@ -59,6 +59,14 @@ bash/pwsh 以 terminal 内容呈现：
 
 > 注意：dsh 会话事件里 bash **没有逐块流式输出**（仅 `tool/call` → `tool/result` 两个事件），因此是「执行完一次性填充终端」，非 token 级实时滚动。
 
+### 上下文占用圆环（usage_update）
+
+客户端状态栏的上下文小圆环由 `session/update { sessionUpdate: 'usage_update', used, size }` 驱动（ACP `UsageUpdate`：`size` = 上下文窗口总 token 数，`used` = 当前已用 token 数）：
+
+- **数据源**：`ctx.sessionProjections.snapshot(session).values.contextPressure`（dsh-token-meter 的 provider 锚定投影）——`used = projectedTokens ?? pressureTokens`，`size = contextWindow`。与 dsh 自身 Web UI 的上下文占用统计同源，压缩（compaction）与模型切换会立即反映，无需等下一次 provider usage 上报。
+- **触发时机**：`assistant/message`、`tool/result`、`turn/end` 后各推一次；`session/load` 时从持久化投影播种；`set_config_option(model)` 后刷新（模型切换可能改变窗口大小）。
+- **静默规则**：分子或分母未知（新会话首个请求之前）时不发，圆环在第一次上报后点亮。
+
 ## 会话配置
 
 `session/new` / `session/load` 返回 `configOptions`（Zed 渲染为下拉选择器），从左到右：
@@ -89,7 +97,7 @@ preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESE
 - Agent preset 为进程级字段，会话内不可切换。
 - 会话列表用 `createdAt` 近似 `updatedAt`，暂不提供标题。
 - 仅基线 prompt（文本 + `resource_link`；图片/音频/embedded resource 会拒绝）。
-- 不回传 plan、会话标题、usage 等（仍属日志/演示层）。
+- 不回传 plan、会话标题等（仍属日志/演示层）；usage 已通过 `usage_update` 回传。
 - 单个 `cwd`，不支持 `mcpServers` 和 `additionalDirectories`。
 
 ## 目录结构

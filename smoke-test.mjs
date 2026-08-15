@@ -101,6 +101,17 @@ ctx.provide('sessionPersistence', {
   },
 })
 
+// Context-pressure projection (dsh-token-meter). Off by default so the
+// existing frame counts above stay stable; sections that assert usage_update
+// flip it on.
+let pressureOn = false
+ctx.provide('sessionProjections', {
+  snapshot: () =>
+    pressureOn
+      ? { values: { contextPressure: { projectedTokens: 1200, contextWindow: 128000 } } }
+      : { values: {} },
+})
+
 apply(ctx, {
   stream: ndJsonStream(agentToClient.writable, clientToAgent.readable),
 })
@@ -343,6 +354,17 @@ check(
 check(cmdFrame.params?.update?.availableCommands?.length === 1, 'one slash command')
 check(cmdFrame.params?.update?.availableCommands?.[0]?.name === 'compact', 'command name')
 
+// 4e. context-usage ring: with the projection populated, committed events push
+// usage_update (used / size) — the feed behind the client's context ring.
+pressureOn = true
+emitEvent('turn/end', { turn: 1, reason: { kind: 'end_turn' } })
+const usageFrame = await readFrame()
+console.log('usage ->', JSON.stringify(usageFrame.params))
+check(usageFrame.method === 'session/update', 'usage frame should be session/update')
+check(usageFrame.params?.update?.sessionUpdate === 'usage_update', 'should emit usage_update')
+check(usageFrame.params?.update?.used === 1200, 'usage_update used tokens')
+check(usageFrame.params?.update?.size === 128000, 'usage_update context window')
+
 // 5. session/list
 await send({ jsonrpc: '2.0', id: 10, method: 'session/list', params: {} })
 const listed = await readFrame()
@@ -356,6 +378,11 @@ await send({ jsonrpc: '2.0', id: 11, method: 'session/load', params: { sessionId
 const replay = []
 for (let i = 0; i < 4; i += 1) replay.push(await readFrame())
 for (const f of replay) console.log('replay ->', JSON.stringify(f.params))
+// loadSession seeds the ring from the persisted projection before answering.
+const usageOnLoad = await readFrame()
+console.log('usage on load ->', JSON.stringify(usageOnLoad.params))
+check(usageOnLoad.params?.update?.sessionUpdate === 'usage_update', 'load should emit usage_update')
+check(usageOnLoad.params?.update?.used === 1200, 'load usage_update used tokens')
 const loaded = await readFrame()
 console.log('session/load ->', JSON.stringify(loaded.result))
 check(loaded.result !== undefined, 'session/load should succeed')
@@ -396,6 +423,9 @@ console.log('set permission ->', JSON.stringify(permResp.result))
 check(permResp.result?.configOptions !== undefined, 'set permission should return configOptions')
 
 await send({ jsonrpc: '2.0', id: 16, method: 'session/set_config_option', params: { sessionId, configId: 'model', value: 'deepseek-official/deepseek-v4-pro' } })
+const modelUsage = await readFrame()
+console.log('set model usage ->', JSON.stringify(modelUsage.params))
+check(modelUsage.params?.update?.sessionUpdate === 'usage_update', 'model switch should refresh usage_update')
 const modelResp = await readFrame()
 console.log('set model ->', JSON.stringify(modelResp.result))
 check(modelResp.result?.configOptions !== undefined, 'set model should return configOptions')

@@ -19,6 +19,7 @@
 - **会话选择器** —— 写权限（3 项）· 模型 · 思考强度
 - **Agent preset** —— 4 个模式作为部署字段注入（`DSH_ACP_PRESET`）
 - **bash 终端** —— 命令输出以 terminal 内容呈现，含退出码
+- **上下文占用圆环** —— `usage_update`（used / size）驱动 IDE 的上下文指示器
 - **斜杠指令** —— 通过 `available_commands_update` 通告 dsh 的 `/` 指令
 
 ## 安装
