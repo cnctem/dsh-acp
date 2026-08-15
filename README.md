@@ -96,6 +96,25 @@ API Key 沿用 dsh 的凭据体系（`$DSH_HOME/.credentials.yaml` 或 `DEEPSEEK
 }
 ```
 
+**用法（agent preset / 模式）**：在 Zed 的 `settings.json` 里，通过 `env` 注入：
+
+```json
+{
+  "agent_servers": {
+    "dsh": {
+      "type": "custom",
+      "command": "dsh",
+      "args": ["--profile", "acp"],
+      "env": {
+        "DSH_ACP_PRESET": "minimal"
+      }
+    }
+  }
+}
+```
+
+不设 `DSH_ACP_PRESET` 就是 `standard`（标准模式）。4 个可选值：`standard`（标准）/ `code`（PTC）/ `minimal`（极简）/ `cordis`（创造）。
+
 ## 验证
 
 ```bash
