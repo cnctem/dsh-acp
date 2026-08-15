@@ -38,6 +38,24 @@ flowchart LR
 - `agent/error` —— 相关 turn 失败时立即拒绝 `session/prompt`。
 - `approval/request` —— 把 dsh 的一次性审批（沙箱越权等）以 `session/request_permission` 交给客户端（allow_once / reject_once）。
 
+### 向用户提问（ask_user_question → elicitation）
+
+agent preset（standard / code / cordis）自带 `@deepseek-ai/dsh-tool-ask-user`，其 `ask_user_question` 工具会阻塞在 `ctx.userQuestions` seam 上。桥接层注册该 seam 的 provider，把提问翻译成 ACP **表单 elicitation**（`elicitation/create`，form 模式）——参考 [codex-acp 的 elicitation 处理](https://github.com/agentclientprotocol/codex-acp)（其 app-server `tool/request_user_input` 同样映射为 form elicitation）：
+
+| dsh 问题形态 | elicitation form 属性 |
+|---|---|
+| 带选项（单选） | `{type: 'string', oneOf: [{const, title}]}`，选中的 label 回到 `selected` |
+| `multi_select: true` + 选项 | `{type: 'array', items: {type: 'string', enum}}`，多选 labels 回到 `selected` |
+| 无选项（自由文本） | `{type: 'string'}`，输入文本回到 `custom` |
+| 任意选项题 + 自定义 | 附加可选自由文本字段 `{id}__other`（title `Other`，description 同 codex：*Type your own answer instead of choosing an option above.*）——这是 dsh 自定义答案通道（web UI 对任何选项题都提供自定义输入）在 ACP 表单上的呈现 |
+
+- **required 语义**：无选项题进 `required`；选项题的主字段**不**进 `required`——用户可以不选任何选项、只填 Other 输入框（codex 的 `isOther` 场景）。`{id}__other` 恒为可选。
+- **答案回填**（对齐 web UI）：单选时 Other 文本**取代**已选选项（`custom` 非空则 `selected` 清空）；多选时 `selected` 保留勾选、Other 文本作为 `custom` 并存；只填 Other 不选选项 → `{selected: [], custom}`。未作答的问题（accept 缺字段）直接省略。
+- 单问题时 `message` 直接用问题文本，多问题用 `Input requested (N questions)`。
+- `tool/call`（`ask_user_question`）时把 callId 压入记录的 FIFO 队列，elicitation 请求携带 `toolCallId`，让 IDE 把问题模态框挂到已渲染的工具卡片上；`tool/result` 时清理未消费的 callId（工具在提问前报错/被中断的场景）。
+- **能力门控**：客户端在 `initialize` 里声明 `clientCapabilities.elicitation.form` 才启用；未声明（或 `elicitation/create` 返回 method-not-found）时工具立即失败并给出自解释错误（`ELICITATION_UNSUPPORTED`：客户端不支持提问，把未决问题或决策并入最终结果），而不是让回合挂起。与 web UI 的语义保持一致：`decline`/`cancel` → `ASK_CANCELLED`，回合取消（abort signal）→ `ASK_ABORTED`。
+- 该 capability 在 SDK 0.25.1 中属 UNSTABLE 通道（`unstable_createElicitation`），但 wire 方法名 `elicitation/create` 与现行规范一致。
+
 ### 斜杠指令
 
 `session/new` / `session/load` 后，通过 `ctx.commands.list(agent)` 枚举该 agent 的 dsh 指令，发 `available_commands_update`（`AvailableCommand` = `{name, description, input?}`）。用 `setTimeout(0)` 延后发送，确保落在 `session/new`（或 load）响应之后——Zed 会忽略未知 sessionId 的通知。
@@ -99,6 +117,7 @@ preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESE
 - 仅基线 prompt（文本 + `resource_link`；图片/音频/embedded resource 会拒绝）。
 - 不回传 plan、会话标题等（仍属日志/演示层）；usage 已通过 `usage_update` 回传。
 - 单个 `cwd`，不支持 `mcpServers` 和 `additionalDirectories`。
+- `ask_user_question` 依赖客户端 `elicitation.form` 能力；不具备时工具报错而不是静默空答（见上）。
 
 ## 目录结构
 

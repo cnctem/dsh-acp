@@ -21,6 +21,7 @@
 - **bash 终端** —— 命令输出以 terminal 内容呈现，含退出码
 - **上下文占用圆环** —— `usage_update`（used / size）驱动 IDE 的上下文指示器
 - **斜杠指令** —— 通过 `available_commands_update` 通告 dsh 的 `/` 指令
+- **向用户提问** —— dsh 的 `ask_user_question` 工具通过 ACP 表单 elicitation 应答（选项 / 多选 / 自由文本）；客户端不具备 elicitation 能力时给出自解释回退
 
 ## 安装
 

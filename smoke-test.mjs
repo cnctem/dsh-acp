@@ -112,6 +112,22 @@ ctx.provide('sessionProjections', {
       : { values: {} },
 })
 
+// userQuestions seam: the bridge registers its elicitation provider here; the
+// mock ask() delegates to it exactly like UserQuestionService does.
+let questionProvider = null
+ctx.provide('userQuestions', {
+  registerProvider(provider) {
+    questionProvider = provider
+    return () => {
+      questionProvider = null
+    }
+  },
+  async ask(request) {
+    if (questionProvider === null) throw new Error('no user-questions provider registered')
+    return questionProvider.ask(request)
+  },
+})
+
 apply(ctx, {
   stream: ndJsonStream(agentToClient.writable, clientToAgent.readable),
 })
@@ -429,6 +445,210 @@ check(modelUsage.params?.update?.sessionUpdate === 'usage_update', 'model switch
 const modelResp = await readFrame()
 console.log('set model ->', JSON.stringify(modelResp.result))
 check(modelResp.result?.configOptions !== undefined, 'set model should return configOptions')
+
+// 10. ask_user_question → ACP elicitation (form mode), per codex-acp.
+// 10a. The initial initialize advertised clientCapabilities: {} — asking must
+// fail fast with the self-explaining ELICITATION_UNSUPPORTED error instead of
+// hanging the turn on a client that cannot render the question.
+const unsupportedError = await ctx.userQuestions
+  .ask({ agent: captured.agent, questions: [{ id: 'q', question: 'Proceed?' }] })
+  .then(
+    () => undefined,
+    (error) => error,
+  )
+console.log('unsupported client ->', String(unsupportedError))
+check(unsupportedError instanceof Error, 'unsupported client should reject ask_user_question')
+check(
+  String(unsupportedError.message).includes('elicitation capability'),
+  'unsupported client error should explain the missing capability',
+)
+
+// 10b. Re-initialize with the elicitation capability advertised.
+await send({
+  jsonrpc: '2.0',
+  id: 20,
+  method: 'initialize',
+  params: { protocolVersion: 1, clientCapabilities: { elicitation: { form: {} } } },
+})
+const init2 = await readFrame()
+console.log('initialize (elicitation) ->', JSON.stringify(init2.result))
+check(init2.result?.protocolVersion === 1, 're-initialize should succeed')
+
+// 10c. The agent calls ask_user_question with one options question, one
+// multi-select, and one free-text question.
+emitEvent('tool/call', {
+  turn: 2,
+  step: 1,
+  callId: 'call-ask',
+  name: 'ask_user_question',
+  arguments:
+    '{"questions":[{"id":"mode","question":"Which preset?","options":[{"label":"standard"},{"label":"code"}]},{"id":"tags","question":"Pick tags","options":[{"label":"a"},{"label":"b"}],"multi_select":true},{"id":"note","question":"Any note?"}]}',
+})
+const askCard = await readFrame()
+console.log('ask card ->', JSON.stringify(askCard.params))
+check(askCard.method === 'session/update', 'ask card should be session/update')
+check(askCard.params?.update?.sessionUpdate === 'tool_call', 'ask_user_question tool card')
+check(askCard.params?.update?.toolCallId === 'call-ask', 'ask card callId')
+
+// 10d. The tool blocks on ctx.userQuestions; the bridge turns it into an
+// elicitation/create request correlated with the tool card.
+const answersPromise = ctx.userQuestions.ask({
+  agent: captured.agent,
+  questions: [
+    { id: 'mode', question: 'Which preset?', options: [{ label: 'standard' }, { label: 'code' }] },
+    { id: 'tags', question: 'Pick tags', options: [{ label: 'a' }, { label: 'b' }], multiSelect: true },
+    { id: 'note', question: 'Any note?' },
+  ],
+})
+const elicitation = await readFrame()
+console.log('elicitation/create ->', JSON.stringify(elicitation))
+check(elicitation.method === 'elicitation/create', 'should be an elicitation/create request')
+check(elicitation.params?.sessionId === sessionId, 'elicitation should carry the session id')
+check(elicitation.params?.toolCallId === 'call-ask', 'elicitation should correlate with the tool call')
+check(elicitation.params?.mode === 'form', 'elicitation should be form mode')
+check(elicitation.params?.message === 'Input requested (3 questions)', 'multi-question message summarizes the form')
+const schema = elicitation.params?.requestedSchema
+check(schema?.type === 'object', 'requestedSchema should be an object schema')
+check(
+  schema?.properties?.mode?.type === 'string' && schema?.properties?.mode?.oneOf?.[0]?.const === 'standard',
+  'options question should be a oneOf string property',
+)
+check(
+  schema?.properties?.tags?.type === 'array' && schema?.properties?.tags?.items?.enum?.length === 2,
+  'multi-select question should be an array enum property',
+)
+check(
+  schema?.properties?.note?.type === 'string' && schema?.properties?.note?.oneOf === undefined,
+  'free-text question should be a plain string property',
+)
+// Option questions carry an optional free-text Other field (the ACP rendering
+// of dsh's custom-answer channel) and are therefore not required; only the
+// option-less question is.
+check(
+  schema?.properties?.mode__other?.type === 'string' &&
+    schema?.properties?.mode__other?.title === 'Other' &&
+    schema?.properties?.mode__other?.description?.includes('Type your own answer'),
+  'single-select question should gain an Other input',
+)
+check(
+  schema?.properties?.tags__other?.type === 'string' && schema?.properties?.tags__other?.title === 'Other',
+  'multi-select question should gain an Other input',
+)
+check(schema?.properties?.note__other === undefined, 'option-less question should not gain an Other input')
+check(
+  schema?.required?.length === 1 && schema?.required?.[0] === 'note',
+  'only the option-less question should be required',
+)
+
+// 10e. The user answers; accept content maps back to dsh answers (picked
+// options → selected labels, Other text → custom — replacing the pick on
+// single-select, riding alongside it on multi-select — matching the web UI).
+await send({
+  jsonrpc: '2.0',
+  id: elicitation.id,
+  result: {
+    action: 'accept',
+    content: { mode: 'standard', mode__other: 'run with vitest', tags: ['a', 'b'], tags__other: 'extra', note: 'hello there' },
+  },
+})
+const answers = await answersPromise
+console.log('answers ->', JSON.stringify(answers))
+check(answers?.answers?.length === 3, 'three answers')
+check(
+  answers?.answers?.[0]?.id === 'mode' && answers.answers[0].custom === 'run with vitest' && answers.answers[0].selected?.length === 0,
+  'typed Other should replace the picked option (single-select)',
+)
+check(
+  answers?.answers?.[1]?.id === 'tags' && answers.answers[1].selected?.length === 2 && answers.answers[1].custom === 'extra',
+  'multi-select should keep the selection and carry the Other text',
+)
+check(
+  answers?.answers?.[2]?.id === 'note' && answers.answers[2].custom === 'hello there' && answers.answers[2].selected?.length === 0,
+  'free text should land in custom',
+)
+
+// 10f. The tool completes; the queued callId is drained and the card updates.
+emitEvent('tool/result', {
+  turn: 2,
+  step: 1,
+  message: {
+    role: 'user',
+    content: [{ type: 'tool-result', toolCallId: 'call-ask', content: [{ type: 'text', text: '{"answers":[]}' }] }],
+    source: { kind: 'tool' },
+  },
+})
+const askResult = await readFrame()
+console.log('ask result ->', JSON.stringify(askResult.params))
+check(askResult.params?.update?.sessionUpdate === 'tool_call_update', 'ask tool_call_update')
+check(askResult.params?.update?.toolCallId === 'call-ask' && askResult.params?.update?.status === 'completed', 'ask card completed')
+
+// 10g. A question answered through the Other input alone (no option picked) —
+// the "其他" scenario: the user types instead of choosing an option.
+emitEvent('tool/call', {
+  turn: 2,
+  step: 2,
+  callId: 'call-ask-other',
+  name: 'ask_user_question',
+  arguments: '{"questions":[{"id":"mode","question":"Which preset?","options":[{"label":"standard"},{"label":"code"}]}]}',
+})
+await readFrame()
+const otherOnlyPromise = ctx.userQuestions.ask({
+  agent: captured.agent,
+  questions: [{ id: 'mode', question: 'Which preset?', options: [{ label: 'standard' }, { label: 'code' }] }],
+})
+const elicitationOther = await readFrame()
+await send({ jsonrpc: '2.0', id: elicitationOther.id, result: { action: 'accept', content: { mode__other: 'custom runner' } } })
+const otherOnly = await otherOnlyPromise
+console.log('other-only ->', JSON.stringify(otherOnly))
+check(
+  otherOnly?.answers?.[0]?.id === 'mode' &&
+    otherOnly.answers[0].custom === 'custom runner' &&
+    otherOnly.answers[0].selected?.length === 0,
+  'Other-only answer should land in custom',
+)
+
+// 10h. A declined elicitation surfaces as ASK_CANCELLED, and an aborted turn
+// (signal) as ASK_ABORTED — neither hangs the tool.
+emitEvent('tool/call', {
+  turn: 2,
+  step: 3,
+  callId: 'call-ask2',
+  name: 'ask_user_question',
+  arguments: '{"questions":[{"id":"confirm","question":"Proceed?"}]}',
+})
+await readFrame()
+const declinedPromise = ctx.userQuestions.ask({ agent: captured.agent, questions: [{ id: 'confirm', question: 'Proceed?' }] })
+const elicitation2 = await readFrame()
+await send({ jsonrpc: '2.0', id: elicitation2.id, result: { action: 'decline' } })
+const declineError = await declinedPromise.then(
+  () => undefined,
+  (error) => error,
+)
+console.log('decline ->', String(declineError))
+check(declineError instanceof Error && String(declineError.message).includes('declined'), 'decline should reject as cancelled')
+
+const abortController = new AbortController()
+emitEvent('tool/call', {
+  turn: 2,
+  step: 4,
+  callId: 'call-ask3',
+  name: 'ask_user_question',
+  arguments: '{"questions":[{"id":"note","question":"Anything else?"}]}',
+})
+await readFrame()
+const abortedPromise = ctx.userQuestions.ask({
+  agent: captured.agent,
+  questions: [{ id: 'note', question: 'Anything else?' }],
+  signal: abortController.signal,
+})
+const elicitation3 = await readFrame()
+abortController.abort()
+const abortError = await abortedPromise.then(
+  () => undefined,
+  (error) => error,
+)
+console.log('abort ->', String(abortError))
+check(abortError instanceof Error && String(abortError.message).includes('aborted'), 'abort should reject as aborted')
 
 console.log(failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures})`)
 process.exit(failures === 0 ? 0 : 1)
