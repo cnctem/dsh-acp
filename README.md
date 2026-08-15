@@ -20,9 +20,9 @@
 - `session/request_permission` → 把 dsh 的 `approval/request`（沙箱越权等）以一次性 allow/reject 选项交给客户端裁决。
 - 会话配置（`session/new` / `session/load` 返回，Zed 渲染为下拉选择器，从左到右）：
   - **写权限**（`permission`，3 项）→ `ctx.permissionPresets`（read-only / workspace-write / danger-full-access），缺省回退到 `ctx.sandboxPolicy` 的三档沙箱模式。
-  - **模式**（`preset`，4 项）→ `ctx.agentPresets` 挂载的 agent preset：标准 / PTC / 极简 / 创造；首次 prompt 前可经 `recompose` 切换。
   - **模型**（`models` + `model` 配置项）→ `ctx.llm.listProviders`/`listModels` 枚举，经 `installModelSelection` 在运行时切换。
   - **思考强度**（`modes` + `thought_level` 配置项）→ `ctx.llm.resolveModelInfo().reasoning.efforts`，切换 `selectionRef.current.reasoningEffort`。
+- **Agent preset（4 模式）是部署级字段，不是会话选择器**：由 `DSH_ACP_PRESET` 环境变量（或 `acp` 行 `config.preset`）注入，空则回退 `standard`。整个 ACP 进程统一用一个 preset 组合（工具集 + persona 来自 preset 的 standing mount）。
 - 复用 `dsh-base` 的完整能力：DeepSeek 模型路由、沙箱 bash/文件系统、工具（fs/fs-search/bash/subagent/workflow/todo/…）、会话持久化（JSONL）、压缩、子代理等。
 
 结构化 diff 优先取自 dsh 工具自带的 `tool/result.meta.diffs`（`write`/`edit` 已算好 hunk diff），`str_replace_editor` 则用执行前/后快照比对。`edit`/`str_replace_editor` 的卡片位置还会按 `old_string`/`old_str` 在编辑前快照中的唯一匹配推断行号，供 Zed 跳转到精确行。提交文本作为兜底：某一步没有流式增量时才回退到 `assistant/message`，避免重复输出。
@@ -32,7 +32,7 @@ stdout 只承载 ACP 帧，诊断信息走 `ctx.logger` → stderr。
 ## 能力边界
 
 - 不支持会话 **fork**（load / list / delete / resume 均已支持）。
-- Agent preset 只能在**首次 prompt 前**切换（dsh 的 `recompose` 只允许空会话）。
+- Agent preset 为**进程级**字段（`DSH_ACP_PRESET`），会话内不可切换；空 → `standard`。
 - 会话列表用创建时间 `createdAt` 近似 `updatedAt`，暂不提供标题。
 - 仅**基线 prompt**（文本 + `resource_link`；图片/音频/embedded resource 会拒绝）。
 - 不回传 plan、会话标题、usage 等（仍属日志/演示层）。
@@ -54,8 +54,10 @@ dsh plugin --profile acp add /Users/a11111/code/dsh-acp
 
 - 模型/供应商：默认沿用 dsh 的默认模型（`$DSH_HOME/settings.yaml` 中的 `agent-default-model`，或 `dsh-base` 内置默认 `deepseek-official/deepseek-v4-flash`）。
 - 覆盖方式（二选一）：
-  - 环境变量：`DSH_ACP_PROVIDER`、`DSH_ACP_MODEL`。
-  - 直接编辑 `$DSH_HOME/profiles/acp/cordis.patch.yml`，在 `acp` 行的 `config` 里写死 `provider` / `model`。
+  - 环境变量：`DSH_ACP_PROVIDER`、`DSH_ACP_MODEL`、`DSH_ACP_PRESET`（preset 空则回退 `standard`）。
+  - 直接编辑 `$DSH_HOME/profiles/acp/cordis.patch.yml`，在 `acp` 行的 `config` 里写死 `provider` / `model` / `preset`。
+
+可选的 4 个 preset：`standard`（标准）、`code`（PTC）、`minimal`（极简）、`cordis`（创造）。
 
 API Key 沿用 dsh 的凭据体系（`$DSH_HOME/.credentials.yaml` 或 `DEEPSEEK_API_KEY` 环境变量），无需为 ACP 单独配置。
 

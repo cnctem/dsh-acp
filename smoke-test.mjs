@@ -179,19 +179,13 @@ check(
   'config should advertise a 3-way permission option',
 )
 check(
-  created.result?.configOptions?.some((o) => o.id === 'preset' && o.category === 'mode' && o.options?.length === 4),
-  'config should advertise a 4-way preset (mode) option',
-)
-check(
-  created.result?.configOptions?.find((o) => o.id === 'preset')?.currentValue === 'standard',
-  'default preset should be standard',
+  created.result?.configOptions?.every((o) => o.id !== 'preset'),
+  'preset should NOT be a config option (it is a deployment field)',
 )
 check(
   created.result?.configOptions?.findIndex((o) => o.id === 'permission') <
-    created.result?.configOptions?.findIndex((o) => o.id === 'preset') &&
-    created.result?.configOptions?.findIndex((o) => o.id === 'preset') <
-      created.result?.configOptions?.findIndex((o) => o.id === 'model'),
-  'order should be permission, preset, model',
+    created.result?.configOptions?.findIndex((o) => o.id === 'model'),
+  'order should be permission before model',
 )
 check(created.result?.models?.availableModels?.length === 1, 'one available model')
 check(created.result?.models?.currentModelId === 'deepseek-official/deepseek-v4-pro', 'current model id')
@@ -358,15 +352,6 @@ await send({ jsonrpc: '2.0', id: 16, method: 'session/set_config_option', params
 const modelResp = await readFrame()
 console.log('set model ->', JSON.stringify(modelResp.result))
 check(modelResp.result?.configOptions !== undefined, 'set model should return configOptions')
-
-await send({ jsonrpc: '2.0', id: 17, method: 'session/set_config_option', params: { sessionId, configId: 'preset', value: 'minimal' } })
-const presetResp = await readFrame()
-console.log('set preset ->', JSON.stringify(presetResp.result))
-check(presetResp.result?.configOptions !== undefined, 'set preset should return configOptions')
-check(
-  presetResp.result?.configOptions?.find((o) => o.id === 'preset')?.currentValue === 'minimal',
-  'preset should have switched to minimal',
-)
 
 console.log(failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures})`)
 process.exit(failures === 0 ? 0 : 1)
