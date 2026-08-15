@@ -215,6 +215,32 @@ check(
   'diff old/new text',
 )
 
+// 4b. edit line inference: old_string "beta" is on line 2 of the snapshot.
+import { writeFileSync } from 'node:fs'
+writeFileSync('/tmp/dsh-acp-line-test.txt', 'alpha\nbeta\ngamma\n', 'utf8')
+emitEvent('tool/call', {
+  turn: 1,
+  step: 2,
+  callId: 'call-edit',
+  name: 'edit',
+  arguments: '{"file_path":"/tmp/dsh-acp-line-test.txt","old_string":"beta","new_string":"BETA"}',
+})
+emitEvent('tool/result', {
+  turn: 1,
+  step: 2,
+  message: {
+    role: 'user',
+    content: [{ type: 'tool-result', toolCallId: 'call-edit', content: [{ type: 'text', text: 'edited' }] }],
+    source: { kind: 'tool' },
+  },
+})
+const editFrames = [await readFrame(), await readFrame()]
+for (const f of editFrames) console.log('edit ->', JSON.stringify(f.params))
+const editCall = editFrames[0].params?.update
+check(editCall?.sessionUpdate === 'tool_call', 'edit tool_call')
+check(editCall?.kind === 'edit', 'edit kind')
+check(editCall?.locations?.[0]?.line === 2, 'edit location should infer line 2')
+
 // 5. session/list
 await send({ jsonrpc: '2.0', id: 10, method: 'session/list', params: {} })
 const listed = await readFrame()

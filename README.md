@@ -20,7 +20,7 @@
 - `session/request_permission` → 把 dsh 的 `approval/request`（沙箱越权等）以一次性 allow/reject 选项交给客户端裁决。
 - 复用 `dsh-base` 的完整能力：DeepSeek 模型路由、沙箱 bash/文件系统、工具（fs/fs-search/bash/subagent/workflow/todo/…）、会话持久化（JSONL）、压缩、子代理等。
 
-结构化 diff 优先取自 dsh 工具自带的 `tool/result.meta.diffs`（`write`/`edit` 已算好 hunk diff），`str_replace_editor` 则用执行前/后快照比对。提交文本作为兜底：某一步没有流式增量时才回退到 `assistant/message`，避免重复输出。
+结构化 diff 优先取自 dsh 工具自带的 `tool/result.meta.diffs`（`write`/`edit` 已算好 hunk diff），`str_replace_editor` 则用执行前/后快照比对。`edit`/`str_replace_editor` 的卡片位置还会按 `old_string`/`old_str` 在编辑前快照中的唯一匹配推断行号，供 Zed 跳转到精确行。提交文本作为兜底：某一步没有流式增量时才回退到 `assistant/message`，避免重复输出。
 
 stdout 只承载 ACP 帧，诊断信息走 `ctx.logger` → stderr。
 
