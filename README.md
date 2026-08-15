@@ -14,6 +14,9 @@
   - `tool/call` → `tool_call`（工具卡片，含 kind、位置跳转、原始入参）
   - `tool/result` → `tool_call_update`（completed/failed，含结果文本或**结构化 diff**）
 - `session/cancel` → 取消该会话的 Agent。
+- `session/list` → 从 `ctx.sessionPersistence.list()` 枚举已持久化会话（含 cwd、创建时间）。
+- `session/load` → `ctx.agents.resume` 恢复一个持久化会话，并回放其转录（user/assistant 消息、工具卡片）后再应答。
+- `session/delete` → 释放该会话（若在线）并删除持久化产物（幂等）。
 - `session/request_permission` → 把 dsh 的 `approval/request`（沙箱越权等）以一次性 allow/reject 选项交给客户端裁决。
 - 复用 `dsh-base` 的完整能力：DeepSeek 模型路由、沙箱 bash/文件系统、工具（fs/fs-search/bash/subagent/workflow/todo/…）、会话持久化（JSONL）、压缩、子代理等。
 
@@ -23,7 +26,8 @@ stdout 只承载 ACP 帧，诊断信息走 `ctx.logger` → stderr。
 
 ## 能力边界
 
-- 仅**新会话**（不支持 load / list / resume / delete / fork）。
+- 不支持会话 **fork**（load / list / delete / resume 均已支持）。
+- 会话列表用创建时间 `createdAt` 近似 `updatedAt`，暂不提供标题。
 - 仅**基线 prompt**（文本 + `resource_link`；图片/音频/embedded resource 会拒绝）。
 - 不回传 plan、会话标题、usage 等（仍属日志/演示层）。
 - 单个 `cwd`，不支持 `mcpServers` 和 `additionalDirectories`。

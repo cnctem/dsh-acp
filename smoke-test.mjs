@@ -13,6 +13,30 @@ const agentToClient = new TransformStream()
 const clientToAgent = new TransformStream()
 
 let captured = null
+let resumed = null
+
+// Persisted sessions backing session/list·load·delete.
+const persisted = [
+  { version: 0, id: 'persist-1', createdAt: 1700000000000, cwd: '/Users/a11111/code/dsh-acp' },
+]
+const replayEvents = [
+  { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] } },
+  {
+    type: 'assistant/message',
+    data: { message: { content: [{ type: 'text', text: 'hello back' }] } },
+  },
+  { type: 'tool/call', data: { callId: 'call-replay', name: 'read', arguments: '{"file_path":"/tmp/r.txt"}' } },
+  {
+    type: 'tool/result',
+    data: {
+      message: {
+        role: 'user',
+        content: [{ type: 'tool-result', toolCallId: 'call-replay', content: [{ type: 'text', text: 'replay content' }] }],
+        source: { kind: 'tool' },
+      },
+    },
+  },
+]
 
 const ctx = new Context()
 ctx.provide('agents', {
@@ -23,12 +47,27 @@ ctx.provide('agents', {
     captured = { sessionId, session, agent }
     return { agent, dispose: async () => {} }
   },
+  async resume(options) {
+    const sessionId = options.resumeSessionId
+    const session = { header: { id: sessionId }, id: sessionId, events: replayEvents }
+    const agent = { id: sessionId, session, cancel() {}, followup() {}, whenIdle: async () => {} }
+    resumed = { sessionId, agent }
+    return { agent, dispose: async () => {} }
+  },
   get(id) {
     return captured && captured.agent.id === id ? captured.agent : undefined
   },
 })
 ctx.provide('agentDefaultModel', {
   currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-pro' }),
+})
+ctx.provide('sessionPersistence', {
+  async list() {
+    return persisted
+  },
+  locate(header) {
+    return { kind: 'jsonl', path: `/tmp/acp-test/${header.id}/session.jsonl.zstd` }
+  },
 })
 
 apply(ctx, {
@@ -78,6 +117,12 @@ await send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVers
 const init = await readFrame()
 console.log('initialize ->', JSON.stringify(init.result))
 check(init.result?.protocolVersion === 1, 'protocolVersion should be 1')
+check(init.result?.agentCapabilities?.loadSession === true, 'should advertise loadSession')
+check(
+  init.result?.agentCapabilities?.sessionCapabilities?.list !== undefined &&
+    init.result?.agentCapabilities?.sessionCapabilities?.delete !== undefined,
+  'should advertise session list/delete capabilities',
+)
 
 // 2. session/new
 await send({
@@ -169,6 +214,42 @@ check(
   writeResult?.content?.[0]?.oldText === 'line one' && writeResult?.content?.[0]?.newText === 'line two',
   'diff old/new text',
 )
+
+// 5. session/list
+await send({ jsonrpc: '2.0', id: 10, method: 'session/list', params: {} })
+const listed = await readFrame()
+console.log('session/list ->', JSON.stringify(listed.result))
+check(listed.result?.sessions?.length === 1, 'should list one persisted session')
+check(listed.result?.sessions?.[0]?.sessionId === 'persist-1', 'listed session id')
+check(listed.result?.sessions?.[0]?.cwd === '/Users/a11111/code/dsh-acp', 'listed session cwd')
+
+// 6. session/load — resumes the agent and replays its transcript first, then responds.
+await send({ jsonrpc: '2.0', id: 11, method: 'session/load', params: { sessionId: 'persist-1', cwd: '/Users/a11111/code/dsh-acp', mcpServers: [] } })
+const replay = []
+for (let i = 0; i < 4; i += 1) replay.push(await readFrame())
+for (const f of replay) console.log('replay ->', JSON.stringify(f.params))
+const loaded = await readFrame()
+console.log('session/load ->', JSON.stringify(loaded.result))
+check(loaded.result !== undefined, 'session/load should succeed')
+check(resumed?.sessionId === 'persist-1', 'agents.resume should have been called')
+
+check(replay[0]?.params?.update?.sessionUpdate === 'user_message_chunk', 'replay user message')
+check(replay[0]?.params?.update?.content?.text === 'hi', 'replay user text')
+check(replay[1]?.params?.update?.sessionUpdate === 'agent_message_chunk', 'replay assistant message')
+check(replay[1]?.params?.update?.content?.text === 'hello back', 'replay assistant text')
+check(replay[2]?.params?.update?.sessionUpdate === 'tool_call', 'replay tool call')
+check(replay[2]?.params?.update?.toolCallId === 'call-replay', 'replay tool call id')
+check(replay[3]?.params?.update?.sessionUpdate === 'tool_call_update', 'replay tool result')
+check(replay[3]?.params?.update?.status === 'completed', 'replay tool result completed')
+
+// 7. session/delete — idempotent, removes the artifact.
+await send({ jsonrpc: '2.0', id: 12, method: 'session/delete', params: { sessionId: 'persist-1' } })
+const deleted = await readFrame()
+console.log('session/delete ->', JSON.stringify(deleted.result))
+check(deleted.result !== undefined, 'session/delete should succeed')
+await send({ jsonrpc: '2.0', id: 13, method: 'session/delete', params: { sessionId: 'does-not-exist' } })
+const deletedMissing = await readFrame()
+check(deletedMissing.result !== undefined, 'session/delete of an unknown id should be idempotent')
 
 console.log(failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures})`)
 process.exit(failures === 0 ? 0 : 1)
