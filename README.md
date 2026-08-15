@@ -1,8 +1,10 @@
 # dsh-acp
 
+> 仓库：[github.com/cnctem/dsh-acp](https://github.com/cnctem/dsh-acp)
+
 一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）编写的 **Agent Client Protocol（ACP）** 服务，通过 **JSON-RPC 2.0 over stdio** 让 [Zed](https://zed.dev) 等 IDE 直接接入 dsh 智能体。
 
-它以官方 `@deepseek-ai/dsh-acp`（`packages/acp/acp`，即仓库中的 *acp example*）为骨架，作为 dsh 的一个 **profile bundle** 叠加在 `dsh-base` 上运行（无需改动 dsh 本体），并在其上补齐了对标 [`pi-acp`](https://github.com/svkozak/pi-acp) 的编辑器体验：token/思考流式、工具调用卡片与结构化 diff。
+它以官方 `@deepseek-ai/dsh-acp`（`packages/acp/acp`，即仓库中的 *acp example*）为骨架，作为 dsh 的一个 **profile bundle** 叠加在 `dsh-base` 上运行（无需改动 dsh 本体），并在其上补齐了对标 [`pi-acp`](https://github.com/svkozak/pi-acp) 的编辑器体验：token/思考流式、工具调用卡片、结构化 diff、会话历史与 bash 终端。
 
 ## 工作原理
 
@@ -43,13 +45,26 @@ stdout 只承载 ACP 帧，诊断信息走 `ctx.logger` → stderr。
 
 要求：Node.js ≥ 20，已安装 `dsh`（本仓库基于 `dsh@0.1.0-rc.6` 开发），已安装 `pnpm`。
 
-把本目录作为 bundle 装进一个名为 `acp` 的 profile（`dsh plugin` 会初始化 profile、用 pnpm 安装本包，并把 `dsh-acp` 追加到 `dsh.profile.bundles`）：
+把本包作为 bundle 装进一个名为 `acp` 的 profile（`dsh plugin` 会初始化 profile、用 pnpm 安装本包，并把 `dsh-acp` 追加到 `dsh.profile.bundles`）：
 
 ```bash
-dsh plugin --profile acp add /Users/a11111/code/dsh-acp
+dsh plugin --profile acp add github:cnctem/dsh-acp
+```
+
+或使用完整 Git URL：
+
+```bash
+dsh plugin --profile acp add https://github.com/cnctem/dsh-acp.git
 ```
 
 > 若 pnpm 提示需要允许 build，按提示在 `$DSH_HOME/profiles/acp/pnpm-workspace.yaml` 加入对应 allowBuilds 后重跑。
+
+**从源码安装**（本地开发）：
+
+```bash
+git clone https://github.com/cnctem/dsh-acp.git
+dsh plugin --profile acp add ./dsh-acp
+```
 
 ## 配置
 

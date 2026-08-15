@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "Agent Client Protocol (ACP) JSON-RPC stdio server for DeepSeek Harness — bridges Zed and other IDEs to dsh agents",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cnctem/dsh-acp.git"
+  },
+  "homepage": "https://github.com/cnctem/dsh-acp#readme",
+  "bugs": {
+    "url": "https://github.com/cnctem/dsh-acp/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "files": [
