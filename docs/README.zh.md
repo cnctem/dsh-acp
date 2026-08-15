@@ -1,6 +1,6 @@
 # dsh-acp
 
-> 仓库：[github.com/cnctem/dsh-acp](https://github.com/cnctem/dsh-acp) · [English](../README.md) · [技术文档](technical.md)
+> [English](../README.md) · [技术文档](technical.md)
 
 一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）编写的 **Agent Client Protocol（ACP）** 服务，通过 **JSON-RPC 2.0 over stdio** 让 [Zed](https://zed.dev) 等 IDE 直接接入 dsh 智能体。
 
@@ -58,7 +58,9 @@ dsh plugin --profile acp add ./dsh-acp
 }
 ```
 
-重启 Zed，在 Agent 面板选择 `dsh`。用 `env` 固定模型或 preset：
+重启 Zed，在 Agent 面板选择 `dsh`。
+
+用 `env` 固定模型或 preset，4 个可选值：为空默认 `standard`（标准）/ `code`（PTC）/ `minimal`（极简）/ `cordis`（创造）。
 
 ```json
 {
