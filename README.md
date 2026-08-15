@@ -1,85 +1,49 @@
 # dsh-acp
 
-> 仓库：[github.com/cnctem/dsh-acp](https://github.com/cnctem/dsh-acp)
+> Repository: [github.com/cnctem/dsh-acp](https://github.com/cnctem/dsh-acp) · [简体中文](docs/README.zh.md) · [技术文档 / Technical notes](docs/technical.md)
 
-一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）编写的 **Agent Client Protocol（ACP）** 服务，通过 **JSON-RPC 2.0 over stdio** 让 [Zed](https://zed.dev) 等 IDE 直接接入 dsh 智能体。
+An **Agent Client Protocol (ACP)** server for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) that lets [Zed](https://zed.dev) and other IDEs drive dsh agents over **JSON-RPC 2.0 stdio**.
 
-它以官方 `@deepseek-ai/dsh-acp`（`packages/acp/acp`，即仓库中的 *acp example*）为骨架，作为 dsh 的一个 **profile bundle** 叠加在 `dsh-base` 上运行（无需改动 dsh 本体），并在其上补齐了对标 [`pi-acp`](https://github.com/svkozak/pi-acp) 的编辑器体验：token/思考流式、工具调用卡片、结构化 diff、会话历史与 bash 终端。
+Built on the official [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) skeleton as a dsh **profile bundle** over `dsh-base`, and extended with the editor experience of [`pi-acp`](https://github.com/svkozak/pi-acp).
 
-## 工作原理
+## Introduction
 
-- dsh 启动 `acp` profile 后，`dsh-acp` 插件在 **stdin/stdout** 上打开一个 ACP `AgentSideConnection`，通过 `ctx.agents` 创建/驱动持久的 Agent 会话。
-- `session/new` → 为每个会话新建一个 dsh Agent（`cwd` 由客户端传入）。
-- `session/prompt` → 把文本块拼成一个用户消息，驱动 Agent 直到空闲（`whenIdle`），沿会话事件火线回传：
-  - `assistant/chunk` 的 `text-delta` → `agent_message_chunk`（token 逐字流式）
-  - `assistant/chunk` 的 `reasoning-delta` → `agent_thought_chunk`（思考流）
-  - `tool/call` → `tool_call`（工具卡片，含 kind、位置跳转、原始入参）
-  - `tool/result` → `tool_call_update`（completed/failed，含结果文本或**结构化 diff**）
-  - bash/pwsh → 以 **terminal 内容**呈现：`tool_call` 带 `terminal` 内容 + `terminal_info`（cwd），`tool_call_update` 带 `terminal_output` + `terminal_exit`（退出码），命令作为卡片标题。
-- `session/cancel` → 取消该会话的 Agent。
-- `session/list` → 从 `ctx.sessionPersistence.list()` 枚举已持久化会话（含 cwd、创建时间）。
-- `session/load` → `ctx.agents.resume` 恢复一个持久化会话，并回放其转录（user/assistant 消息、工具卡片）后再应答。
-- `session/delete` → 释放该会话（若在线）并删除持久化产物（幂等）。
-- `session/request_permission` → 把 dsh 的 `approval/request`（沙箱越权等）以一次性 allow/reject 选项交给客户端裁决。
-- 会话配置（`session/new` / `session/load` 返回，Zed 渲染为下拉选择器，从左到右）：
-  - **写权限**（`permission`，3 项）→ `ctx.permissionPresets`（read-only / workspace-write / danger-full-access），缺省回退到 `ctx.sandboxPolicy` 的三档沙箱模式。
-  - **模型**（`models` + `model` 配置项）→ `ctx.llm.listProviders`/`listModels` 枚举，经 `installModelSelection` 在运行时切换。
-  - **思考强度**（`modes` + `thought_level` 配置项）→ `ctx.llm.resolveModelInfo().reasoning.efforts`，切换 `selectionRef.current.reasoningEffort`。
-- **Agent preset（4 模式）是部署级字段，不是会话选择器**：由 `DSH_ACP_PRESET` 环境变量（或 `acp` 行 `config.preset`）注入，空则回退 `standard`。整个 ACP 进程统一用一个 preset 组合（工具集 + persona 来自 preset 的 standing mount）。
-- 复用 `dsh-base` 的完整能力：DeepSeek 模型路由、沙箱 bash/文件系统、工具（fs/fs-search/bash/subagent/workflow/todo/…）、会话持久化（JSONL）、压缩、子代理等。
+`dsh-acp` mounts an ACP server on dsh's stdin/stdout. Zed launches `dsh --profile acp` and speaks ACP JSON-RPC over stdio; the plugin translates `session/*` requests into dsh agent lifecycles. No dsh modification required.
 
-结构化 diff 优先取自 dsh 工具自带的 `tool/result.meta.diffs`（`write`/`edit` 已算好 hunk diff），`str_replace_editor` 则用执行前/后快照比对。`edit`/`str_replace_editor` 的卡片位置还会按 `old_string`/`old_str` 在编辑前快照中的唯一匹配推断行号，供 Zed 跳转到精确行。提交文本作为兜底：某一步没有流式增量时才回退到 `assistant/message`，避免重复输出。
+## Features
 
-stdout 只承载 ACP 帧，诊断信息走 `ctx.logger` → stderr。
+- **Token & thinking streaming** — `agent_message_chunk` / `agent_thought_chunk`
+- **Tool cards** — `tool_call` / `tool_call_update` with kind, file location and line
+- **Structured diffs** — edit/write hunks plus before/after snapshots
+- **Session history** — `session/list` · `session/load` · `session/delete`
+- **Session selectors** — write permission (3) · model · thinking strength
+- **Agent presets** — 4 modes injected as a deployment field (`DSH_ACP_PRESET`)
+- **Bash terminal** — command output rendered as terminal content with exit code
 
-## 能力边界
+## Installation
 
-- 不支持会话 **fork**（load / list / delete / resume 均已支持）。
-- Agent preset 为**进程级**字段（`DSH_ACP_PRESET`），会话内不可切换；空 → `standard`。
-- 会话列表用创建时间 `createdAt` 近似 `updatedAt`，暂不提供标题。
-- 仅**基线 prompt**（文本 + `resource_link`；图片/音频/embedded resource 会拒绝）。
-- 不回传 plan、会话标题、usage 等（仍属日志/演示层）。
-- 单个 `cwd`，不支持 `mcpServers` 和 `additionalDirectories`。
-
-## 安装
-
-要求：Node.js ≥ 20，已安装 `dsh`（本仓库基于 `dsh@0.1.0-rc.6` 开发），已安装 `pnpm`。
-
-把本包作为 bundle 装进一个名为 `acp` 的 profile（`dsh plugin` 会初始化 profile、用 pnpm 安装本包，并把 `dsh-acp` 追加到 `dsh.profile.bundles`）：
+Prerequisites: Node.js ≥ 20, `dsh` (developed against `dsh@0.1.0-rc.6`), `pnpm`.
 
 ```bash
 dsh plugin --profile acp add github:cnctem/dsh-acp
 ```
 
-或使用完整 Git URL：
-
-```bash
-dsh plugin --profile acp add https://github.com/cnctem/dsh-acp.git
-```
-
-> 若 pnpm 提示需要允许 build，按提示在 `$DSH_HOME/profiles/acp/pnpm-workspace.yaml` 加入对应 allowBuilds 后重跑。
-
-**从源码安装**（本地开发）：
+From source:
 
 ```bash
 git clone https://github.com/cnctem/dsh-acp.git
 dsh plugin --profile acp add ./dsh-acp
 ```
 
-## 配置
+## Configuration
 
-- 模型/供应商：默认沿用 dsh 的默认模型（`$DSH_HOME/settings.yaml` 中的 `agent-default-model`，或 `dsh-base` 内置默认 `deepseek-official/deepseek-v4-flash`）。
-- 覆盖方式（二选一）：
-  - 环境变量：`DSH_ACP_PROVIDER`、`DSH_ACP_MODEL`、`DSH_ACP_PRESET`（preset 空则回退 `standard`）。
-  - 直接编辑 `$DSH_HOME/profiles/acp/cordis.patch.yml`，在 `acp` 行的 `config` 里写死 `provider` / `model` / `preset`。
+- Model/provider defaults to dsh's default model; override via `DSH_ACP_PROVIDER` / `DSH_ACP_MODEL` (or edit the `acp` row in `$DSH_HOME/profiles/acp/cordis.patch.yml`).
+- Agent preset via `DSH_ACP_PRESET`; empty → `standard`. Values: `standard` / `code` (PTC) / `minimal` / `cordis`.
+- API key reuses dsh credentials (`$DSH_HOME/.credentials.yaml` or `DEEPSEEK_API_KEY`).
 
-可选的 4 个 preset：`standard`（标准）、`code`（PTC）、`minimal`（极简）、`cordis`（创造）。
+## Integration
 
-API Key 沿用 dsh 的凭据体系（`$DSH_HOME/.credentials.yaml` 或 `DEEPSEEK_API_KEY` 环境变量），无需为 ACP 单独配置。
-
-## 接入 Zed
-
-在 Zed 的 `settings.json` 中加入：
+Add to Zed's `settings.json`:
 
 ```json
 {
@@ -94,25 +58,7 @@ API Key 沿用 dsh 的凭据体系（`$DSH_HOME/.credentials.yaml` 或 `DEEPSEEK
 }
 ```
 
-然后重启 Zed，在 Agent 面板选择 `dsh` 即可。若需要固定模型，可用 `env` 传入：
-
-```json
-{
-  "agent_servers": {
-    "dsh": {
-      "type": "custom",
-      "command": "dsh",
-      "args": ["--profile", "acp"],
-      "env": {
-        "DSH_ACP_MODEL": "deepseek-v4-pro",
-        "DSH_ACP_PROVIDER": "deepseek-official"
-      }
-    }
-  }
-}
-```
-
-**用法（agent preset / 模式）**：在 Zed 的 `settings.json` 里，通过 `env` 注入：
+Restart Zed and pick `dsh`. Fix a model or preset via `env`:
 
 ```json
 {
@@ -121,40 +67,16 @@ API Key 沿用 dsh 的凭据体系（`$DSH_HOME/.credentials.yaml` 或 `DEEPSEEK
       "type": "custom",
       "command": "dsh",
       "args": ["--profile", "acp"],
-      "env": {
-        "DSH_ACP_PRESET": "code"
-      }
+      "env": { "DSH_ACP_PRESET": "code" }
     }
   }
 }
 ```
 
-Zed 也支持同时为同一个 acp 设置多个入口，可以配置为不同名称实现与其他模式共存，在 “+“ 中展示为不同入口。
+Zed also supports multiple entries for the same acp, so different presets can coexist as separate entries in the "+" menu.
 
-不设 `DSH_ACP_PRESET` 就是 `standard`（标准模式）。4 个可选值：`standard`（标准）/ `code`（PTC）/ `minimal`（极简）/ `cordis`（创造）。
+## Acknowledgements
 
-## 验证
-
-```bash
-# 查看组合结果，确认 acp 插件已挂载
-dsh --profile acp --dump-config | grep -A4 '"acp"'
-
-# 用 stdio 手工发一帧 initialize（Ctrl-D 结束输入）
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}' | dsh --profile acp
-```
-
-## 目录结构
-
-```
-dsh-acp/
-  package.json        # dsh.bundle.patch 声明 + 依赖
-  cordis.patch.yml    # bundle patch：persona、关闭 HMR、挂载 acp 插件
-  lib/index.js        # ACP 服务端插件（apply/inject）
-  README.md
-```
-
-## 参考
-
-- [Agent Client Protocol](https://agentclientprotocol.com)
-- 官方实现：[`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) 与 [examples/acp-agent](https://github.com/deepseek-ai/deepseek-harness/tree/master/examples/acp-agent)
-- [`pi-acp`](https://github.com/svkozak/pi-acp)（另一个 ACP 适配器，作为更丰富的编辑器集成的参考）
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and its [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) example
+- [`pi-acp`](https://github.com/svkozak/pi-acp) — the reference for the richer editor experience
+- [Agent Client Protocol](https://agentclientprotocol.com) and [Zed](https://zed.dev)

@@ -1,0 +1,122 @@
+# dsh-acp 技术文档
+
+本文档描述 `dsh-acp` 的实现细节：架构、会话事件到 ACP 的映射、配置机制与能力边界。面向维护者与需要深入理解行为的用户。
+
+## 架构
+
+`dsh-acp` 是一个 dsh **profile bundle**（声明 `dsh.bundle.patch`），叠加在 `dsh-base` 上运行。`dsh --profile acp` 启动后，插件 `apply(ctx, config)` 在进程 stdin/stdout 上打开一个 ACP `AgentSideConnection`，通过 `ctx.agents` 创建/驱动持久 Agent 会话。
+
+```mermaid
+flowchart LR
+  Zed -->|ACP JSON-RPC over stdio| ACP[AgentSideConnection]
+  ACP -->|session/*| Bridge[dsh-acp 插件]
+  Bridge -->|ctx.agents create/resume| Agent[dsh Agent]
+  Agent -->|session/event 火线| Bridge
+  Bridge -->|session/update 通知| Zed
+```
+
+- stdout 只承载 ACP 帧；诊断信息走 `ctx.logger` → stderr。
+- 模型路由、沙箱、审批、持久化、子代理注册表等宿主能力由 `dsh-base` 提供；工具与 persona 来自 agent preset 的 standing mount（见下文）。
+
+## 会话事件 → ACP 映射
+
+插件订阅 `session/event` 火线，按事件类型翻译：
+
+| dsh 会话事件 | ACP 输出 |
+|---|---|
+| `assistant/chunk`（`text-delta`） | `agent_message_chunk`（token 逐字流式） |
+| `assistant/chunk`（`reasoning-delta`） | `agent_thought_chunk`（思考流） |
+| `assistant/message` | 兜底：某一步没有流式增量时才回退提交文本，避免重复 |
+| `tool/call` | `tool_call`（kind、位置跳转、原始入参） |
+| `tool/result` | `tool_call_update`（completed/failed，结果文本或结构化 diff） |
+| `tool/call`/`tool/result`（bash/pwsh） | terminal 内容（见「bash 终端」） |
+| `turn/end` | 关联到 in-flight prompt 的结束原因，映射为 ACP `stopReason` |
+
+其他生命周期事件通过以下订阅完成：
+
+- `agent/inbox/claimed` —— 把提交的消息 id 关联到其 turn，用于精确结算。
+- `agent/error` —— 相关 turn 失败时立即拒绝 `session/prompt`。
+- `approval/request` —— 把 dsh 的一次性审批（沙箱越权等）以 `session/request_permission` 交给客户端（allow_once / reject_once）。
+
+### 结构化 diff
+
+- `write`/`edit` 优先取 dsh 工具自带的 `tool/result.meta.diffs`（已算好 hunk diff）。
+- `str_replace_editor` 无该 meta，故在 `tool/call` 时对目标文件做快照、`tool/result` 时再读比对。
+- `edit`/`str_replace_editor` 的卡片位置按 `old_string`/`old_str` 在编辑前快照中的唯一匹配推断 1-based 行号；歧义（多次匹配）时不带行号。
+
+### bash 终端
+
+bash/pwsh 以 terminal 内容呈现：
+
+- `tool_call`：`content: [{type:'terminal', terminalId}]` + `_meta.terminal_info`（terminal_id + cwd），命令作为卡片标题，`kind: 'execute'`。
+- `tool_call_update`：`_meta.terminal_output`（完整输出）+ `_meta.terminal_exit`（退出码 + signal）。
+
+输出与退出码优先取 `tool/result.meta`（`card: 'terminal'` 时读 `meta.output`/`meta.exitCode`/`meta.signal`）；非 terminal 情况（错误/后台任务）回退到渲染文本。
+
+> 注意：dsh 会话事件里 bash **没有逐块流式输出**（仅 `tool/call` → `tool/result` 两个事件），因此是「执行完一次性填充终端」，非 token 级实时滚动。
+
+## 会话配置
+
+`session/new` / `session/load` 返回 `configOptions`（Zed 渲染为下拉选择器），从左到右：
+
+| id | category | 来源 |
+|---|---|---|
+| `permission` | `permission` | `ctx.permissionPresets`（read-only / workspace-write / danger-full-access）；缺省回退 `ctx.sandboxPolicy` 三档沙箱模式 |
+| `model` | `model` | `ctx.llm.listProviders`/`listModels`；经 `installModelSelection` 运行时切换 |
+| `thought_level` | `thought_level` | `ctx.llm.resolveModelInfo().reasoning.efforts`；切换 `selectionRef.current.reasoningEffort` |
+
+同时返回 `models`/`modes` 字段（供非 Zed 的 ACP 客户端使用）。**Zed 在 `configOptions` 存在时会忽略 `models`/`modes`**，因此所有 Zed 可见的选择器都必须进 `configOptions`。
+
+### Agent preset（4 模式）
+
+preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESET` 环境变量（或 `acp` 行 `config.preset`）注入，空则回退 `standard`。4 个可选值：`standard`（标准）/ `code`（PTC）/ `minimal`（极简）/ `cordis`（创造）。
+
+实现：`cordis.patch.yml` 禁用 23 个宿主平面「模型面向」行（工具、提示段、委派工具），挂载 `dsh-agent-presets`（默认 `standard`）；CLI 会自动注入随安装的 preset 根目录。`session/new`/`session/load` 在 factory 的 `setup(agentCtx)` 里调用 `agentPresets.mount(agentCtx, presetId)`，整个进程统一用一个 preset 组合。
+
+## 会话历史
+
+- `session/list` → `ctx.sessionPersistence.list()` 枚举持久化会话（cwd + `createdAt` 近似 `updatedAt`，游标分页）。
+- `session/load` → 校验持久化 header → 释放同 id 在线会话 → `ctx.agents.resume` → 回放转录（user/assistant 消息、工具卡片）后再应答。
+- `session/delete` → 释放在线会话 + 删除持久化产物（seam 无删除 API，用 `locate` + `rmSync` 尽力而为），幂等。
+
+## 能力边界
+
+- 不支持会话 **fork**（load / list / delete / resume 均已支持）。
+- Agent preset 为进程级字段，会话内不可切换。
+- 会话列表用 `createdAt` 近似 `updatedAt`，暂不提供标题。
+- 仅基线 prompt（文本 + `resource_link`；图片/音频/embedded resource 会拒绝）。
+- 不回传 plan、会话标题、usage 等（仍属日志/演示层）。
+- 单个 `cwd`，不支持 `mcpServers` 和 `additionalDirectories`。
+
+## 目录结构
+
+```
+dsh-acp/
+  package.json          # dsh.bundle.patch 声明 + 依赖 + 仓库元信息
+  cordis.patch.yml      # bundle patch：persona、关闭 HMR、agent 平面迁到 preset、挂载 acp
+  lib/index.js          # ACP 服务端插件（apply/inject）
+  smoke-test.mjs        # 协议冒烟测试（mock 服务，不触模型栈 / $DSH_HOME）
+  README.md             # 英文 README
+  docs/
+    README.zh.md        # 中文 README
+    technical.md        # 本文档
+```
+
+## 验证
+
+```bash
+# 查看组合结果，确认 acp 插件已挂载
+dsh --profile acp --dump-config | grep -A4 '"acp"'
+
+# 用 stdio 手工发一帧 initialize（Ctrl-D 结束输入）
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}' | dsh --profile acp
+
+# 跑协议冒烟测试（不触模型栈）
+node smoke-test.mjs
+```
+
+## 参考
+
+- [Agent Client Protocol](https://agentclientprotocol.com)
+- 官方实现：[`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) 与 [examples/acp-agent](https://github.com/deepseek-ai/deepseek-harness/tree/master/examples/acp-agent)
+- [`pi-acp`](https://github.com/svkozak/pi-acp)
