@@ -13,6 +13,7 @@
   - `assistant/chunk` 的 `reasoning-delta` → `agent_thought_chunk`（思考流）
   - `tool/call` → `tool_call`（工具卡片，含 kind、位置跳转、原始入参）
   - `tool/result` → `tool_call_update`（completed/failed，含结果文本或**结构化 diff**）
+  - bash/pwsh → 以 **terminal 内容**呈现：`tool_call` 带 `terminal` 内容 + `terminal_info`（cwd），`tool_call_update` 带 `terminal_output` + `terminal_exit`（退出码），命令作为卡片标题。
 - `session/cancel` → 取消该会话的 Agent。
 - `session/list` → 从 `ctx.sessionPersistence.list()` 枚举已持久化会话（含 cwd、创建时间）。
 - `session/load` → `ctx.agents.resume` 恢复一个持久化会话，并回放其转录（user/assistant 消息、工具卡片）后再应答。

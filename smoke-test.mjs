@@ -296,6 +296,39 @@ check(editCall?.sessionUpdate === 'tool_call', 'edit tool_call')
 check(editCall?.kind === 'edit', 'edit kind')
 check(editCall?.locations?.[0]?.line === 2, 'edit location should infer line 2')
 
+// 4c. bash terminal content: tool_call carries terminal content + info meta,
+// tool_call_update carries terminal_output + terminal_exit.
+emitEvent('tool/call', {
+  turn: 1,
+  step: 3,
+  callId: 'call-bash',
+  name: 'bash',
+  arguments: '{"command":"echo hello","description":"say hi"}',
+})
+emitEvent('tool/result', {
+  turn: 1,
+  step: 3,
+  message: {
+    role: 'user',
+    content: [{ type: 'tool-result', toolCallId: 'call-bash', content: [{ type: 'text', text: 'hello\n' }] }],
+    source: { kind: 'tool' },
+  },
+  meta: { card: 'terminal', output: 'hello\n', exitCode: 0 },
+})
+const bashFrames = [await readFrame(), await readFrame()]
+for (const f of bashFrames) console.log('bash ->', JSON.stringify(f.params))
+const bashCall = bashFrames[0].params?.update
+check(bashCall?.sessionUpdate === 'tool_call', 'bash tool_call')
+check(bashCall?.kind === 'execute', 'bash kind should be execute')
+check(bashCall?.title === 'echo hello', 'bash title should be the command')
+check(bashCall?.content?.[0]?.type === 'terminal', 'bash call should carry terminal content')
+check(bashCall?.content?.[0]?.terminalId === 'call-bash', 'terminal id matches call id')
+check(bashCall?._meta?.terminal_info?.terminal_id === 'call-bash', 'terminal_info meta')
+const bashResult = bashFrames[1].params?.update
+check(bashResult?.sessionUpdate === 'tool_call_update', 'bash tool_call_update')
+check(bashResult?._meta?.terminal_output?.data === 'hello\n', 'terminal_output data')
+check(bashResult?._meta?.terminal_exit?.exit_code === 0, 'terminal_exit exit code')
+
 // 5. session/list
 await send({ jsonrpc: '2.0', id: 10, method: 'session/list', params: {} })
 const listed = await readFrame()
