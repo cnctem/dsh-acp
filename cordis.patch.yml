@@ -1,0 +1,29 @@
+# dsh-acp bundle patch: an ACP (Agent Client Protocol) JSON-RPC stdio server
+# that rides directly over dsh-base. It mounts no HTTP server, Web runtime, or
+# browser plugin, and keeps stdout reserved for ACP frames (diagnostics go to
+# stderr through ctx.logger).
+#
+# The ACP plugin creates one fresh Agent per `session/new`, drives each prompt
+# to quiescence, streams committed assistant text as `agent_message_chunk`, and
+# answers bridge-owned approval requests through one-shot client permissions.
+
+# Give the agent a coding persona. {{model}} and {{cwd}} are resolved by
+# dsh-system-prompt; tool plugins own their own guidance.
+- id: system-prompt
+  config:
+    persona: >-
+      You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}.
+      Your bash tool runs under a file sandbox — a `[sandbox: file access denied …]` result is
+      policy, not a command bug. Verify your work by running the code or tests. Keep answers brief and factual.
+
+# The shared module-reload HMR row stays off; a file watcher has no place in a
+# stdio protocol server and would add noise while running.
+- id: hmr
+  disabled: true
+
+- insert:
+    - id: acp
+      name: 'dsh-acp'
+      config:
+        provider: !!js process.env.DSH_ACP_PROVIDER
+        model: !!js process.env.DSH_ACP_MODEL
