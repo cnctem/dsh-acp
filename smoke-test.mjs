@@ -66,12 +66,14 @@ ctx.provide('llm', {
   listModels: async (provider) => [{ id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider }],
   resolveModelInfo: async (_provider, _model) => ({
     reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' },
-  }),
-})
+  }),})
 ctx.provide('permissionPresets', {
   names: ['read-only', 'workspace-write', 'danger-full-access'],
   current: () => 'workspace-write',
   set: () => {},
+})
+ctx.provide('commands', {
+  list: () => [{ name: 'compact', description: 'Compress the session', input: { hint: 'optional notes' } }],
 })
 ctx.provide('agentPresets', {
   defaultId: 'standard',
@@ -328,6 +330,18 @@ const bashResult = bashFrames[1].params?.update
 check(bashResult?.sessionUpdate === 'tool_call_update', 'bash tool_call_update')
 check(bashResult?._meta?.terminal_output?.data === 'hello\n', 'terminal_output data')
 check(bashResult?._meta?.terminal_exit?.exit_code === 0, 'terminal_exit exit code')
+
+// 4d. slash commands are advertised via available_commands_update (arrives after
+// the rich-editor notifications because advertiseCommands uses setTimeout(0)).
+const cmdFrame = await readFrame()
+console.log('commands ->', JSON.stringify(cmdFrame.params))
+check(cmdFrame.method === 'session/update', 'commands frame should be session/update')
+check(
+  cmdFrame.params?.update?.sessionUpdate === 'available_commands_update',
+  'should advertise available_commands_update',
+)
+check(cmdFrame.params?.update?.availableCommands?.length === 1, 'one slash command')
+check(cmdFrame.params?.update?.availableCommands?.[0]?.name === 'compact', 'command name')
 
 // 5. session/list
 await send({ jsonrpc: '2.0', id: 10, method: 'session/list', params: {} })

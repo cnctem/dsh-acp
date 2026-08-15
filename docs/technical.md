@@ -38,6 +38,10 @@ flowchart LR
 - `agent/error` —— 相关 turn 失败时立即拒绝 `session/prompt`。
 - `approval/request` —— 把 dsh 的一次性审批（沙箱越权等）以 `session/request_permission` 交给客户端（allow_once / reject_once）。
 
+### 斜杠指令
+
+`session/new` / `session/load` 后，通过 `ctx.commands.list(agent)` 枚举该 agent 的 dsh 指令，发 `available_commands_update`（`AvailableCommand` = `{name, description, input?}`）。用 `setTimeout(0)` 延后发送，确保落在 `session/new`（或 load）响应之后——Zed 会忽略未知 sessionId 的通知。
+
 ### 结构化 diff
 
 - `write`/`edit` 优先取 dsh 工具自带的 `tool/result.meta.diffs`（已算好 hunk diff）。

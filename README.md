@@ -19,6 +19,7 @@ Built on the official [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/de
 - **Session selectors** — write permission (3) · model · thinking strength
 - **Agent presets** — 4 modes injected as a deployment field (`DSH_ACP_PRESET`)
 - **Bash terminal** — command output rendered as terminal content with exit code
+- **Slash commands** — dsh's `/` commands advertised via `available_commands_update`
 
 ## Installation
 
