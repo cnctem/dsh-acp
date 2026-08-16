@@ -20,6 +20,7 @@ Built on the official [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/de
 - **Agent presets** — 4 modes injected as a deployment field (`DSH_ACP_PRESET`)
 - **Bash terminal** — command output rendered as terminal content with exit code
 - **Context-usage ring** — `usage_update` (used / size) feeds the IDE's context indicator
+- **Todo list** — dsh's `todo_write` snapshots rendered as the IDE's plan checklist (`plan` update), cleared when a new turn begins
 - **Slash commands** — dsh's `/` commands advertised via `available_commands_update`
 - **Ask the user** — dsh's `ask_user_question` tool answered through ACP form elicitation (options, multi-select, free text), with a self-explaining fallback for clients without the elicitation capability
 

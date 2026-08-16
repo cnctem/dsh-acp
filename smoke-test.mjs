@@ -36,6 +36,11 @@ const replayEvents = [
       },
     },
   },
+  // Todo history: an early list, a turn boundary that clears it, and a final
+  // snapshot — the replay fold must surface exactly the last list.
+  { type: 'todo/write', data: { todos: [{ content: 'plan A', status: 'in_progress' }] } },
+  { type: 'turn/start', data: { turn: 2 } },
+  { type: 'todo/write', data: { todos: [{ content: 'plan B', status: 'pending' }] } },
 ]
 
 const ctx = new Context()
@@ -381,6 +386,51 @@ check(usageFrame.params?.update?.sessionUpdate === 'usage_update', 'should emit 
 check(usageFrame.params?.update?.used === 1200, 'usage_update used tokens')
 check(usageFrame.params?.update?.size === 128000, 'usage_update context window')
 
+// 4f. todo list → ACP plan: each todo_write snapshot (todo/write) becomes a
+// `plan` update with whole-list replacement — the feed behind the IDE's task
+// checklist. Entries carry content/priority/status (priority is ACP-required;
+// dsh todos have none, so it is always medium).
+// The clear is gated on a plan having been shown: the turn/start right before
+// the first todo/write must emit nothing, so the next frame is the plan
+// itself, not an empty clear.
+emitEvent('turn/start', { turn: 2 })
+emitEvent('todo/write', {
+  todos: [
+    { content: 'Explore the codebase', status: 'in_progress' },
+    { content: 'Write the bridge', status: 'pending' },
+    { content: 'Verify in Zed', status: 'pending' },
+  ],
+})
+const planFrame = await readFrame()
+console.log('plan ->', JSON.stringify(planFrame.params))
+check(planFrame.method === 'session/update', 'plan frame should be session/update')
+const planUpdate = planFrame.params?.update
+check(planUpdate?.sessionUpdate === 'plan', 'todo/write should emit a plan update')
+check(planUpdate?.entries?.length === 3, 'plan should carry all three todos')
+check(planUpdate?.entries?.[0]?.content === 'Explore the codebase', 'first plan entry content')
+check(planUpdate?.entries?.[0]?.priority === 'medium', 'plan entries should carry a priority')
+check(planUpdate?.entries?.[0]?.status === 'in_progress', 'plan entry status maps through')
+
+// A second snapshot replaces the whole list (no partial updates).
+emitEvent('todo/write', {
+  todos: [
+    { content: 'Explore the codebase', status: 'completed' },
+    { content: 'Write the bridge', status: 'in_progress' },
+  ],
+})
+const planFrame2 = await readFrame()
+const planUpdate2 = planFrame2.params?.update
+check(planUpdate2?.sessionUpdate === 'plan', 'second todo/write should emit a plan update')
+check(planUpdate2?.entries?.length === 2, 'plan should be replaced wholesale')
+check(planUpdate2?.entries?.[1]?.status === 'in_progress', 'second entry status')
+
+// A new turn clears the checklist (web-UI parity: turn/start hides the list).
+emitEvent('turn/start', { turn: 2 })
+const planClear = await readFrame()
+console.log('plan clear ->', JSON.stringify(planClear.params))
+check(planClear.params?.update?.sessionUpdate === 'plan', 'turn/start should emit a plan update')
+check(planClear.params?.update?.entries?.length === 0, 'turn/start should clear the plan')
+
 // 5. session/list
 await send({ jsonrpc: '2.0', id: 10, method: 'session/list', params: {} })
 const listed = await readFrame()
@@ -392,7 +442,7 @@ check(listed.result?.sessions?.[0]?.cwd === '/Users/a11111/code/dsh-acp', 'liste
 // 6. session/load — resumes the agent and replays its transcript first, then responds.
 await send({ jsonrpc: '2.0', id: 11, method: 'session/load', params: { sessionId: 'persist-1', cwd: '/Users/a11111/code/dsh-acp', mcpServers: [] } })
 const replay = []
-for (let i = 0; i < 4; i += 1) replay.push(await readFrame())
+for (let i = 0; i < 5; i += 1) replay.push(await readFrame())
 for (const f of replay) console.log('replay ->', JSON.stringify(f.params))
 // loadSession seeds the ring from the persisted projection before answering.
 const usageOnLoad = await readFrame()
@@ -412,6 +462,11 @@ check(replay[2]?.params?.update?.sessionUpdate === 'tool_call', 'replay tool cal
 check(replay[2]?.params?.update?.toolCallId === 'call-replay', 'replay tool call id')
 check(replay[3]?.params?.update?.sessionUpdate === 'tool_call_update', 'replay tool result')
 check(replay[3]?.params?.update?.status === 'completed', 'replay tool result completed')
+// The todo history folds to a single final plan: the earlier list is cleared
+// by the turn boundary, so only "plan B" surfaces.
+check(replay[4]?.params?.update?.sessionUpdate === 'plan', 'replay should fold the todo history into a plan')
+check(replay[4]?.params?.update?.entries?.length === 1, 'replay plan entry count')
+check(replay[4]?.params?.update?.entries?.[0]?.content === 'plan B', 'replay plan should be the latest snapshot')
 
 // 7. session/delete — idempotent, removes the artifact.
 await send({ jsonrpc: '2.0', id: 12, method: 'session/delete', params: { sessionId: 'persist-1' } })

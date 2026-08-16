@@ -85,6 +85,28 @@ bash/pwsh 以 terminal 内容呈现：
 - **触发时机**：`assistant/message`、`tool/result`、`turn/end` 后各推一次；`session/load` 时从持久化投影播种；`set_config_option(model)` 后刷新（模型切换可能改变窗口大小）。
 - **静默规则**：分子或分母未知（新会话首个请求之前）时不发，圆环在第一次上报后点亮。
 
+### todo 列表（plan）
+
+dsh 的 `todo_write` 工具（agent preset 自带）以整表快照的形式追加 `todo/write` 会话事件（`{todos: {content, status}[]}`，`status ∈ pending / in_progress / completed`）。桥接层把它翻译成 ACP `plan` 更新（`sessionUpdate: 'plan'`，稳定 v1 通道，Zed 等客户端将其渲染为任务清单/计划卡片）：
+
+```json
+{
+  "sessionId": "...",
+  "update": {
+    "sessionUpdate": "plan",
+    "entries": [
+      { "content": "分析现有代码结构", "priority": "medium", "status": "in_progress" }
+    ]
+  }
+}
+```
+
+- **整表替换**：每次 `todo/write` 都发送完整列表（ACP 要求每次更新携带全部条目，客户端整体替换），与 Web UI 的 `todos` 投影（last-write-wins）语义一致。
+- **字段映射**：`content`、`status` 直接透传（状态词表一致）；`priority` 是 ACP 必填字段而 dsh todo 没有优先级，统一填 `medium`。
+- **回合边界**：`turn/start` 时发送空 `entries` 清空清单——与 Web UI「新回合开始隐藏已完成清单」的行为对齐（`turn/end` 保持清单可见）。仅在确实发送过 plan 之后才发清空，从未写过 todo 的会话不产生多余帧。
+- **会话回放**：`session/load` 时对 `todo/write` / `turn/start` 事件做同一折叠（整表覆盖、turn/start 清空），只发**一条**最终的 plan 更新；折叠结果为 null（从未写过或被 turn/start 清空）则不发送。
+- **线格式说明**：使用稳定通道 `sessionUpdate: 'plan'`（扁平 `entries`）而非 UNSTABLE 的 `plan_update` 包装格式——Zed 的 ACP 客户端只匹配前者并渲染（后者会被静默忽略）。
+
 ## 会话配置
 
 `session/new` / `session/load` 返回 `configOptions`（Zed 渲染为下拉选择器），从左到右：
@@ -106,7 +128,7 @@ preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESE
 ## 会话历史
 
 - `session/list` → `ctx.sessionPersistence.list()` 枚举持久化会话（cwd + `createdAt` 近似 `updatedAt`，游标分页）。
-- `session/load` → 校验持久化 header → 释放同 id 在线会话 → `ctx.agents.resume` → 回放转录（user/assistant 消息、工具卡片）后再应答。
+- `session/load` → 校验持久化 header → 释放同 id 在线会话 → `ctx.agents.resume` → 回放转录（user/assistant 消息、工具卡片；todo 历史折叠为一条 plan 更新）后再应答。
 - `session/delete` → 释放在线会话 + 删除持久化产物（seam 无删除 API，用 `locate` + `rmSync` 尽力而为），幂等。
 
 ## 能力边界
@@ -115,7 +137,7 @@ preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESE
 - Agent preset 为进程级字段，会话内不可切换。
 - 会话列表用 `createdAt` 近似 `updatedAt`，暂不提供标题。
 - 仅基线 prompt（文本 + `resource_link`；图片/音频/embedded resource 会拒绝）。
-- 不回传 plan、会话标题等（仍属日志/演示层）；usage 已通过 `usage_update` 回传。
+- 不回传会话标题等（仍属日志/演示层）；usage 与 todo 列表已分别通过 `usage_update` / `plan` 回传。
 - 单个 `cwd`，不支持 `mcpServers` 和 `additionalDirectories`。
 - `ask_user_question` 依赖客户端 `elicitation.form` 能力；不具备时工具报错而不是静默空答（见上）。
 
