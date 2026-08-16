@@ -68,10 +68,17 @@ ctx.provide('agentDefaultModel', {
 })
 ctx.provide('llm', {
   listProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek' }],
-  listModels: async (provider) => [{ id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider }],
-  resolveModelInfo: async (_provider, _model) => ({
-    reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' },
-  }),})
+  listModels: async (provider) => [
+    { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider },
+    { id: 'deepseek-v4-lite', name: 'DeepSeek V4 Lite', provider },
+  ],
+  // deepseek-v4-pro exposes reasoning metadata; deepseek-v4-lite exposes none
+  // and must fall back to the canonical thinking-level list.
+  resolveModelInfo: async (_provider, model) =>
+    model === 'deepseek-v4-lite'
+      ? {}
+      : { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' } },
+})
 ctx.provide('permissionPresets', {
   names: ['read-only', 'workspace-write', 'danger-full-access'],
   current: () => 'workspace-write',
@@ -221,7 +228,7 @@ check(
     created.result?.configOptions?.findIndex((o) => o.id === 'model'),
   'order should be permission before model',
 )
-check(created.result?.models?.availableModels?.length === 1, 'one available model')
+check(created.result?.models?.availableModels?.length === 2, 'two available models')
 check(created.result?.models?.currentModelId === 'deepseek-official/deepseek-v4-pro', 'current model id')
 check(created.result?.modes?.availableModes?.length === 2, 'two thinking modes')
 check(created.result?.modes?.currentModeId === 'high', 'default thinking mode')
@@ -500,6 +507,28 @@ check(modelUsage.params?.update?.sessionUpdate === 'usage_update', 'model switch
 const modelResp = await readFrame()
 console.log('set model ->', JSON.stringify(modelResp.result))
 check(modelResp.result?.configOptions !== undefined, 'set model should return configOptions')
+
+// 9b. Switch to a model without reasoning metadata: the thinking picker must
+// fall back to the canonical ordered list instead of disappearing, and the
+// select must still carry a schema-required currentValue.
+await send({ jsonrpc: '2.0', id: 17, method: 'session/set_config_option', params: { sessionId, configId: 'model', value: 'deepseek-official/deepseek-v4-lite' } })
+const fallbackUsage = await readFrame()
+check(fallbackUsage.params?.update?.sessionUpdate === 'usage_update', 'lite model switch should refresh usage_update')
+const fallbackResp = await readFrame()
+console.log('set model (no reasoning metadata) ->', JSON.stringify(fallbackResp.result?.configOptions))
+const fallbackThought = fallbackResp.result?.configOptions?.find((o) => o.id === 'thought_level')
+check(fallbackThought !== undefined, 'thought_level should still be advertised without reasoning metadata')
+check(
+  JSON.stringify(fallbackThought?.options?.map((o) => o.value)) ===
+    JSON.stringify(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
+  'fallback thinking levels should be the full ordered list',
+)
+check(
+  typeof fallbackThought?.currentValue === 'string' &&
+    fallbackThought?.options?.some((o) => o.value === fallbackThought.currentValue),
+  'fallback thought_level should carry a valid currentValue',
+)
+check(fallbackThought?.currentValue === 'off', 'fallback currentValue should be the first level when nothing is selected')
 
 // 10. ask_user_question → ACP elicitation (form mode), per codex-acp.
 // 10a. The initial initialize advertised clientCapabilities: {} — asking must
