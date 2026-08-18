@@ -48,7 +48,16 @@ ctx.provide('agents', {
   async create(options) {
     const sessionId = options.sessionId
     const session = { header: { id: sessionId }, id: sessionId }
-    const agent = { id: sessionId, session }
+    const agent = {
+      id: sessionId,
+      session,
+      cancel() {},
+      followup() {
+        this.followedUp = true
+      },
+      whenIdle: async () => {},
+      followedUp: false,
+    }
     captured = { sessionId, session, agent }
     return { agent, dispose: async () => {} }
   },
@@ -86,6 +95,12 @@ ctx.provide('permissionPresets', {
 })
 ctx.provide('commands', {
   list: () => [{ name: 'compact', description: 'Compress the session', input: { hint: 'optional notes' } }],
+  execute: async (_agent, line) => {
+    if (String(line).trim().startsWith('/plan')) {
+      return { commandId: 'cmd-plan', result: { kind: 'success', text: 'Plan mode on. Use /plan off to leave.' } }
+    }
+    return undefined
+  },
 })
 ctx.provide('agentPresets', {
   defaultId: 'standard',
@@ -665,6 +680,10 @@ const askResult = await readFrame()
 console.log('ask result ->', JSON.stringify(askResult.params))
 check(askResult.params?.update?.sessionUpdate === 'tool_call_update', 'ask tool_call_update')
 check(askResult.params?.update?.toolCallId === 'call-ask' && askResult.params?.update?.status === 'completed', 'ask card completed')
+// The tool/result also refreshes the context-usage ring (pressureOn → one
+// usage_update frame) before the next ask_user_question card below.
+const askUsage = await readFrame()
+check(askUsage.params?.update?.sessionUpdate === 'usage_update', 'ask tool/result should refresh usage_update')
 
 // 10g. A question answered through the Other input alone (no option picked) —
 // the "其他" scenario: the user types instead of choosing an option.
@@ -733,6 +752,30 @@ const abortError = await abortedPromise.then(
 )
 console.log('abort ->', String(abortError))
 check(abortError instanceof Error && String(abortError.message).includes('aborted'), 'abort should reject as aborted')
+
+// 11. session/prompt — a recognized slash command dispatches in the command
+// plane rather than reaching the model: `/plan` must run here so plan mode
+// activates (and a later exit_plan_mode succeeds). The command result text
+// surfaces as a message chunk and the prompt settles without a model turn.
+captured.agent.followedUp = false
+await send({ jsonrpc: '2.0', id: 31, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: '/plan' }] } })
+const commandChunk = await readFrame()
+console.log('command dispatch chunk ->', JSON.stringify(commandChunk.params))
+check(commandChunk.method === 'session/update', 'command result should be a session/update')
+check(commandChunk.params?.update?.sessionUpdate === 'agent_message_chunk', 'command result should surface as a message chunk')
+check(commandChunk.params?.update?.content?.text === 'Plan mode on. Use /plan off to leave.', 'command result text should surface')
+const commandResp = await readFrame()
+console.log('command dispatch response ->', JSON.stringify(commandResp.result))
+check(commandResp.id === 31, 'command prompt should resolve')
+check(commandResp.result?.stopReason === 'end_turn', 'a recognized command should end the turn')
+check(captured.agent.followedUp === false, 'a recognized command should not reach the model as input')
+
+// 11b. Non-command text still drives the model through the ordinary prompt path.
+await send({ jsonrpc: '2.0', id: 32, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'write a function' }] } })
+const modelPromptResp = await readFrame()
+console.log('model prompt response ->', JSON.stringify(modelPromptResp.result))
+check(modelPromptResp.id === 32, 'non-command prompt should resolve')
+check(captured.agent.followedUp === true, 'non-command text should reach the model via followup')
 
 console.log(failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures})`)
 process.exit(failures === 0 ? 0 : 1)

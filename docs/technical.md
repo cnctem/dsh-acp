@@ -60,6 +60,8 @@ agent preset（standard / code / cordis）自带 `@deepseek-ai/dsh-tool-ask-user
 
 `session/new` / `session/load` 后，通过 `ctx.commands.list(agent)` 枚举该 agent 的 dsh 指令，发 `available_commands_update`（`AvailableCommand` = `{name, description, input?}`）。用 `setTimeout(0)` 延后发送，确保落在 `session/new`（或 load）响应之后——Zed 会忽略未知 sessionId 的通知。
 
+`session/prompt` 收到以 `/` 开头的文本时，先经 `ctx.commands.execute(agent, line, signal)` 分发：命中的指令在命令平面执行，**不进入模型历史**，其结果文本以 `agent_message_chunk` 回显给客户端，随后回合以 `end_turn` 结束（不驱动模型回合）。这使 `/plan` 能真正开启 plan mode——否则 `/plan` 会被当作普通文本交给模型，导致后续 `exit_plan_mode` 因「不在 plan mode 中」而失败。未命中或非法 `/` 文本不是命令，仍按普通模型输入回退。带消息的命令（如 `/plan <message>`）由处理器自行 `agent.steer()` 追加模型可见工作，桥接层在响应前等待该回合收敛。
+
 ### 结构化 diff
 
 - `write`/`edit` 优先取 dsh 工具自带的 `tool/result.meta.diffs`（已算好 hunk diff）。
