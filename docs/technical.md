@@ -117,7 +117,7 @@ dsh 的 `todo_write` 工具（agent preset 自带）以整表快照的形式追�
 |---|---|---|
 | `permission` | `permission` | `ctx.permissionPresets`（read-only / workspace-write / danger-full-access）；缺省回退 `ctx.sandboxPolicy` 三档沙箱模式 |
 | `model` | `model` | `ctx.llm.listProviders`/`listModels`；经 `installModelSelection` 运行时切换 |
-| `thought_level` | `thought_level` | `ctx.llm.resolveModelInfo().reasoning.efforts`；切换 `selectionRef.current.reasoningEffort` |
+| `thought_level` | `thought_level` | `ctx.llm.resolveModelInfo().reasoning.efforts`；切换 `selectionRef.current.reasoningEffort`。无 reasoning 元数据的模型回退到规范级别表；模型未声明 `defaultEffort` 时选择器额外提供首项 `provider-default`（显示用，请求守卫会剥离，不向模型发送任何 effort——与 Web UI 的「Provider default」一致），默认值**永不**回退到 `off` |
 
 同时返回 `models`/`modes` 字段（供非 Zed 的 ACP 客户端使用）。**Zed 在 `configOptions` 存在时会忽略 `models`/`modes`**，因此所有 Zed 可见的选择器都必须进 `configOptions`。
 

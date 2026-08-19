@@ -525,7 +525,11 @@ check(modelResp.result?.configOptions !== undefined, 'set model should return co
 
 // 9b. Switch to a model without reasoning metadata: the thinking picker must
 // fall back to the canonical ordered list instead of disappearing, and the
-// select must still carry a schema-required currentValue.
+// select must still carry a schema-required currentValue. The default must be
+// the display-only "Provider default" entry — never the first declared level
+// (`off`), which would advertise (and, for clients that apply the
+// currentValue, enforce) thinking off for a model whose default is actually
+// whatever the provider decides.
 await send({ jsonrpc: '2.0', id: 17, method: 'session/set_config_option', params: { sessionId, configId: 'model', value: 'deepseek-official/deepseek-v4-lite' } })
 const fallbackUsage = await readFrame()
 check(fallbackUsage.params?.update?.sessionUpdate === 'usage_update', 'lite model switch should refresh usage_update')
@@ -535,15 +539,18 @@ const fallbackThought = fallbackResp.result?.configOptions?.find((o) => o.id ===
 check(fallbackThought !== undefined, 'thought_level should still be advertised without reasoning metadata')
 check(
   JSON.stringify(fallbackThought?.options?.map((o) => o.value)) ===
-    JSON.stringify(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
-  'fallback thinking levels should be the full ordered list',
+    JSON.stringify(['provider-default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
+  'fallback thinking levels should lead with provider-default, then the full ordered list',
 )
 check(
   typeof fallbackThought?.currentValue === 'string' &&
     fallbackThought?.options?.some((o) => o.value === fallbackThought.currentValue),
   'fallback thought_level should carry a valid currentValue',
 )
-check(fallbackThought?.currentValue === 'off', 'fallback currentValue should be the first level when nothing is selected')
+check(
+  fallbackThought?.currentValue === 'provider-default',
+  'fallback currentValue should be provider-default when nothing is selected, never off',
+)
 
 // 10. ask_user_question → ACP elicitation (form mode), per codex-acp.
 // 10a. The initial initialize advertised clientCapabilities: {} — asking must
