@@ -946,5 +946,38 @@ check(
 check(lastCommandSignal instanceof AbortSignal, 'command should receive the abort signal')
 check(captured.agent.followedUp === false, 'a command with images should not reach the model as input')
 
+// 13. session/new with client-forwarded MCP servers (e.g. JetBrains AI
+// Assistant) must succeed — they are ignored, not rejected.
+await send({
+  jsonrpc: '2.0',
+  id: 46,
+  method: 'session/new',
+  params: {
+    cwd: '/Users/a11111/code/dsh-acp',
+    mcpServers: [
+      {
+        name: 'ide-configured',
+        command: 'mcp-server',
+        args: ['--stdio'],
+        env: [],
+      },
+    ],
+    additionalDirectories: [],
+  },
+})
+// Notifications (usage_update / available_commands_update) may precede the
+// response, so skip frames until the reply to id 46 arrives.
+let mcpServersResp
+for (let i = 0; i < 5 && mcpServersResp === undefined; i++) {
+  const frame = await readFrame()
+  if (frame.id === 46) mcpServersResp = frame
+}
+console.log('session/new with mcpServers ->', JSON.stringify(mcpServersResp))
+check(mcpServersResp.id === 46 && mcpServersResp.error === undefined, 'session/new with mcpServers should be accepted')
+check(
+  typeof mcpServersResp.result?.sessionId === 'string' && mcpServersResp.result.sessionId.length > 0,
+  'mcpServers-ignoring session/new should return a sessionId',
+)
+
 console.log(failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures})`)
 process.exit(failures === 0 ? 0 : 1)

@@ -160,7 +160,7 @@ preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESE
 - 会话列表用 `createdAt` 近似 `updatedAt`，暂不提供标题。
 - 仅基线 prompt（文本 + `resource_link` + `image`；音频 / embedded resource 会拒绝）。图片经 `dsh-attachment` 持久化准入，见「识图」节。
 - 不回传会话标题等（仍属日志/演示层）；usage 与 todo 列表已分别通过 `usage_update` / `plan` 回传。
-- 单个 `cwd`，不支持 `mcpServers` 和 `additionalDirectories`。
+- 单个 `cwd`，`additionalDirectories` 不支持；客户端转发来的 `mcpServers`（如 JetBrains AI Assistant）会被接受但忽略——桥不暴露任何 MCP 工具。
 - `ask_user_question` 依赖客户端 `elicitation.form` 能力；不具备时工具报错而不是静默空答（见上）。
 
 ## 目录结构
