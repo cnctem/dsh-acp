@@ -27,7 +27,7 @@
 # The base keeps every model-facing row (tools, prompt sections, delegation
 # backends) on the HOST plane for the single-session TUI. The ACP server is
 # multi-session and lets each session mount one of the four agent presets
-# (standard / PTC / minimal / cordis) instead, so those rows are disabled here
+# (standard / minimal) instead, so those rows are disabled here
 # and provided by each preset's own standing composition. The registries and
 # infra (sandbox, approval, persistence, model route, subagent registry,
 # skill/tool registries) stay on the host plane.

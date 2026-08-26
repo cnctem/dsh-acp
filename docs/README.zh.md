@@ -17,7 +17,7 @@
 - **结构化 diff** —— edit/write 的 hunk diff + 前后快照
 - **会话历史** —— `session/list` · `session/load` · `session/delete`
 - **会话选择器** —— 写权限（3 项）· 模型 · 思考强度
-- **Agent preset** —— 4 个模式作为部署字段注入（`DSH_ACP_PRESET`）
+- **Agent preset** —— 部署字段注入的进程级预设选择（`DSH_ACP_PRESET`）：内置 `standard` / `minimal` （其他模式需在 profile 中全局挂载，见配置节），也支持 `$DSH_HOME/.agent-presets/` 下自建的预设
 - **bash 终端** —— 命令输出以 terminal 内容呈现，含退出码
 - **上下文占用圆环** —— `usage_update`（used / size）驱动 IDE 的上下文指示器
 - **todo 列表** —— dsh 的 `todo_write` 快照以 `plan` 更新呈现在 IDE 的任务清单中，新回合开始时清空
@@ -26,7 +26,7 @@
 
 ## 安装
 
-要求：Node.js ≥ 20，已安装 `dsh`（基于 `dsh@0.1.0-rc.6` 开发），已安装 `pnpm`。
+要求：Node.js ≥ 20，已安装 `dsh`（基于 `dsh@0.1.1-rc.2` 开发），已安装 `pnpm`。
 
 ```bash
 dsh plugin --profile acp add github:cnctem/dsh-acp
@@ -42,7 +42,8 @@ dsh plugin --profile acp add ./dsh-acp
 ## 配置
 
 - 模型/供应商默认沿用 dsh 的默认模型；用 `DSH_ACP_PROVIDER` / `DSH_ACP_MODEL` 覆盖（或编辑 `$DSH_HOME/profiles/acp/cordis.patch.yml` 的 `acp` 行）。
-- Agent preset 用 `DSH_ACP_PRESET` 注入；空则回退 `standard`。取值：`standard` / `code`（PTC）/ `minimal` / `cordis`。
+- Agent preset 用可选的 `DSH_ACP_PRESET` 注入，值**直接映射到本次装载的预设**（它就是预设 id 本身，不存在"必须取 roster 名单"的约束）：不设或为空 → 默认 `standard`；指定的预设不存在 → 会话创建时报错。开箱可用内置 `standard` / `minimal`，或 `$DSH_HOME/.agent-presets/<id>/` 下自建的预设（用户根默认也是预设根）。
+- `code`（PTC）与 `cordis`（创造模式）它们不在 `dsh-base` 里。分别需要全局安装 `code-runtime` 和 `cordis-host-runner` 插件，之后即可像其他预设一样用 `DSH_ACP_PRESET` 选 `code`/`cordis`。
 - API Key 沿用 dsh 凭据（`$DSH_HOME/.credentials.yaml` 或 `DEEPSEEK_API_KEY`）。
 
 ## 接入 Zed
@@ -64,16 +65,16 @@ dsh plugin --profile acp add ./dsh-acp
 
 重启 Zed，在 Agent 面板选择 `dsh`。
 
-用 `env` 固定模型或 preset，4 个可选值：为空默认 `standard`（标准）/ `code`（PTC）/ `minimal`（极简）/ `cordis`（创造）。
+用 `env` 固定模型或 preset：`DSH_ACP_PRESET` 的值直接指定本次装载的预设——为空默认 `standard`（标准），指定的预设不存在则报错；开箱可用 `minimal`（极简），也支持全局安装的其他预设。
 
 ```json
 {
   "agent_servers": {
-    "dsh-code": {
+    "dsh-minimal": {
       "type": "custom",
       "command": "dsh",
       "args": ["--profile", "acp"],
-      "env": { "DSH_ACP_PRESET": "code" }
+      "env": { "DSH_ACP_PRESET": "minimal" }
     }
   }
 }

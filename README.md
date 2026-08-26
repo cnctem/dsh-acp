@@ -19,7 +19,7 @@ Built on the official [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/de
 - **Structured diffs** — edit/write hunks plus before/after snapshots
 - **Session history** — `session/list` · `session/load` · `session/delete`
 - **Session selectors** — write permission (3) · model · thinking strength
-- **Agent presets** — 4 modes injected as a deployment field (`DSH_ACP_PRESET`)
+- **Agent presets** — deployment-wide preset selection via `DSH_ACP_PRESET`: the built-in `standard` / `minimal` modes (other modes need global mounting in the profile, see Configuration), plus any preset you author under `$DSH_HOME/.agent-presets/`
 - **Bash terminal** — command output rendered as terminal content with exit code
 - **Context-usage ring** — `usage_update` (used / size) feeds the IDE's context indicator
 - **Todo list** — dsh's `todo_write` snapshots rendered as the IDE's plan checklist (`plan` update), cleared when a new turn begins
@@ -28,7 +28,7 @@ Built on the official [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/de
 
 ## Installation
 
-Prerequisites: Node.js ≥ 20, `dsh` (developed against `dsh@0.1.0-rc.6`), `pnpm`.
+Prerequisites: Node.js ≥ 20, `dsh` (developed against `dsh@0.1.1-rc.2`), `pnpm`.
 
 ```bash
 dsh plugin --profile acp add github:cnctem/dsh-acp
@@ -44,7 +44,8 @@ dsh plugin --profile acp add ./dsh-acp
 ## Configuration
 
 - Model/provider defaults to dsh's default model; override via `DSH_ACP_PROVIDER` / `DSH_ACP_MODEL` (or edit the `acp` row in `$DSH_HOME/profiles/acp/cordis.patch.yml`).
-- Agent preset via `DSH_ACP_PRESET`; empty → `standard`. Values: `standard` / `code` (PTC) / `minimal` / `cordis`.
+- Agent preset via `DSH_ACP_PRESET` — an optional field whose value directly names the preset mounted for every session: the value **is** the preset id, no roster constraint on your side. Unset or empty → `standard`; a value naming no existing preset fails session creation with an error. Valid ids are the shipped `standard` / `minimal` presets, plus any preset you author under `$DSH_HOME/.agent-presets/<id>/` (the user root is a preset root by default).
+- The `code` (PTC) and `cordis` (creation) presets are not in `dsh-base`. They need the `code-runtime` and `cordis-host-runner` plugins installed globally (in the profile's `cordis.patch.yml`), after which you can pick `code` / `cordis` via `DSH_ACP_PRESET` like any other preset.
 - API key reuses dsh credentials (`$DSH_HOME/.credentials.yaml` or `DEEPSEEK_API_KEY`).
 
 ## Integration
@@ -64,16 +65,16 @@ Add to Zed's `settings.json`:
 }
 ```
 
-Restart Zed and pick `dsh`. Fix a model or preset via `env`:
+Restart Zed and pick `dsh`. Fix a model or preset via `env` (`DSH_ACP_PRESET` directly names the preset to mount — empty → `standard`, unknown id → session error; `standard` / `minimal` work out of the box, and globally installed presets are supported too):
 
 ```json
 {
   "agent_servers": {
-    "dsh-code": {
+    "dsh-minimal": {
       "type": "custom",
       "command": "dsh",
       "args": ["--profile", "acp"],
-      "env": { "DSH_ACP_PRESET": "code" }
+      "env": { "DSH_ACP_PRESET": "minimal" }
     }
   }
 }

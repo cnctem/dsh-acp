@@ -121,11 +121,20 @@ dsh 的 `todo_write` 工具（agent preset 自带）以整表快照的形式追�
 
 同时返回 `models`/`modes` 字段（供非 Zed 的 ACP 客户端使用）。**Zed 在 `configOptions` 存在时会忽略 `models`/`modes`**，因此所有 Zed 可见的选择器都必须进 `configOptions`。
 
-### Agent preset（4 模式）
+### Agent preset（部署字段）
 
-preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESET` 环境变量（或 `acp` 行 `config.preset`）注入，空则回退 `standard`。4 个可选值：`standard`（标准）/ `code`（PTC）/ `minimal`（极简）/ `cordis`（创造）。
+preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESET` 环境变量（或 `acp` 行 `config.preset`）注入，**值直接映射到本次被装载的预设 id**，不是"必须取 roster 中的 id"这类约束——`session/new`/`session/load` 在 factory 的 `setup(agentCtx)` 里就是按这个值调用 `agentPresets.mount(agentCtx, presetId)`。该字段可选：不设或为空 → 回退 `standard`；指定的 id 在任何预设根中都不存在 → `UnknownPresetError` 报错（信息列出可用预设），会话创建失败。可用 id 包括内置 `standard`（标准）/ `minimal`（极简），以及 `$DSH_HOME/.agent-presets/<id>/` 下用户自建的预设（用户根默认纳入 roster，`includeUserRoot` 默认开启）；`code`（PTC）/ `cordis`（创造）不在 `dsh-base` 里，需先在 profile 中全局安装对应插件（见下）。
 
 实现：`cordis.patch.yml` 禁用 23 个宿主平面「模型面向」行（工具、提示段、委派工具），挂载 `dsh-agent-presets`（默认 `standard`）；CLI 会自动注入随安装的 preset 根目录。`session/new`/`session/load` 在 factory 的 `setup(agentCtx)` 里调用 `agentPresets.mount(agentCtx, presetId)`，整个进程统一用一个 preset 组合。
+
+`code`（PTC）与 `cordis`（创造模式）**不在 `dsh-base` 里**：它们额外依赖两个**宿主平面**插件（`dsh@0.1.1-rc.2` 随安装提供，但由 `dsh-web-app` 层组合，`dsh-base` 不含）：
+
+- `code-runtime`（`@deepseek-ai/dsh-code-runtime-worker-thread`）提供 `codeRuntime`：`code` 预设的 `tool-presentation` 行（`mode: code`）通过 `ctx.inject(["codeRuntime"], …)` 等待它；缺失时挂载审计通过（非插件级 inject），但 Code Mode 展示静默不生效、退化为 standard。
+- `cordis-host-runner`（`@deepseek-ai/dsh-cordis-host-runner`）提供 `dynamicCordisRunner`/`cordisInspect`：`cordis` 预设的 `tool-cordis` 行把它们声明为插件级 inject；缺失时挂载直接失败（`N row(s) did not activate: tool-cordis: waiting for …`）。
+
+需要这两个模式时，在 `$DSH_HOME/profiles/acp/cordis.patch.yml`（宿主平面）**全局安装对应的两个插件**（行 id/name 与 `dsh-web-app` 组合一致，见该 bundle patch 顶部的注释模板），之后即可像其他预设一样用 `DSH_ACP_PRESET=code`/`cordis` 选择。前置条件：`dsh` ≥ `0.1.1-rc.2`（更早版本安装不含这两个包，挂载了也解析不了）。
+
+`minimal`/`standard` 不依赖这两个插件。用户自建的预设走同一套规则：预设内只放该会话自己的工具/persona/提示段；若预设需要额外的宿主服务，应把对应行加进 profile 的 `cordis.patch.yml`（宿主平面），而不是写进预设。
 
 ## 会话历史
 
