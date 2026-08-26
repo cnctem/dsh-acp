@@ -1,5 +1,7 @@
 # dsh-acp
 
+![cover](docs/cover.png)
+
 > [简体中文](docs/README.zh.md) · [技术文档 / Technical notes](docs/technical.md)
 
 An **Agent Client Protocol (ACP)** server for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) that lets [Zed](https://zed.dev) and other IDEs drive dsh agents over **JSON-RPC 2.0 stdio**.
