@@ -60,7 +60,18 @@ agent preset（standard / code / cordis）自带 `@deepseek-ai/dsh-tool-ask-user
 
 `session/new` / `session/load` 后，通过 `ctx.commands.list(agent)` 枚举该 agent 的 dsh 指令，发 `available_commands_update`（`AvailableCommand` = `{name, description, input?}`）。用 `setTimeout(0)` 延后发送，确保落在 `session/new`（或 load）响应之后——Zed 会忽略未知 sessionId 的通知。
 
-`session/prompt` 收到以 `/` 开头的文本时，先经 `ctx.commands.execute(agent, line, signal)` 分发：命中的指令在命令平面执行，**不进入模型历史**，其结果文本以 `agent_message_chunk` 回显给客户端，随后回合以 `end_turn` 结束（不驱动模型回合）。这使 `/plan` 能真正开启 plan mode——否则 `/plan` 会被当作普通文本交给模型，导致后续 `exit_plan_mode` 因「不在 plan mode 中」而失败。未命中或非法 `/` 文本不是命令，仍按普通模型输入回退。带消息的命令（如 `/plan <message>`）由处理器自行 `agent.steer()` 追加模型可见工作，桥接层在响应前等待该回合收敛。
+`session/prompt` 收到以 `/` 开头的文本时，先经 `ctx.commands.execute(agent, line, images, signal)` 分发（`images` 为随 prompt 携带的原始 base64 图片上传，空数组表示无图片；指令自己完成准入）：命中的指令在命令平面执行，**不进入模型历史**，其结果文本以 `agent_message_chunk` 回显给客户端，随后回合以 `end_turn` 结束（不驱动模型回合）。这使 `/plan` 能真正开启 plan mode——否则 `/plan` 会被当作普通文本交给模型，导致后续 `exit_plan_mode` 因「不在 plan mode 中」而失败。未命中或非法 `/` 文本不是命令，仍按普通模型输入回退。带消息的命令（如 `/plan <message>`）由处理器自行 `agent.steer()` 追加模型可见工作，桥接层在响应前等待该回合收敛。
+
+### 识图（image prompt）
+
+`initialize` 通告 `promptCapabilities.image: true`（audio / embeddedContext 仍为 false），Zed 等客户端因此允许在 prompt 中携带 `image` 内容块。`session/prompt` 收到图片块时的处理：
+
+1. **准入**：图片块（`{type: 'image', mimeType, data}`）先映射成 dsh 的 wire 准入形态 `EncodedImageAttachment`（`mediaType` + canonical base64，与浏览器上传端点同一契约），再经共享入口 `admitEncodedImages(attachments, images)` 交给 dsh 0.1.1 的持久化附件服务（`ctx.attachments`，`dsh-attachment`）——批量限额、媒体类型校验、规范化与顺序提交全部由附件服务执行，返回**持久引用**（`ImageAttachmentRef`，形如 `sha256:…`）。
+2. **错误映射**：准入拒绝（`IMAGE_TOO_LARGE` 等 `ImageAdmissionErrorCode` 子集，按 `code` 路由、不依赖原型链）→ ACP `invalidParams`，且被拒批次不落任何持久对象；存储故障保持内部错误。
+3. **模型消息**：按 prompt 原始块顺序构造用户消息——文本与 `resource_link` 保持文本，每个图片块变成 dsh 的 `ImageBlock {type: 'image', attachment: ref}`（模型侧由 provider 适配器解析成请求版本，如 DeepSeek 的 `image_url` part；纯文本模型由 harness 自行投影/替换）。仅图片、无文本的 prompt 也是合法输入。
+4. **斜杠指令**：识别为 `/` 指令时，原始 base64 上传随 `commands.execute(agent, line, images, signal)` 交给命令平面——**指令自己完成准入**（自己的 store/限额检查；不接受图片的指令以错误文本结算，不会静默丢弃上传），桥接层不再重复准入，避免同一批图片落两份对象。
+
+历史回放（`session/load`）中带图片的用户消息以文本占位符呈现（`[image: <name/mediaType>, WxH px]`）——与工具结果里 `read_image` 的文本信封一致，不静默丢上下文。
 
 ### 结构化 diff
 
@@ -147,7 +158,7 @@ preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESE
 - 不支持会话 **fork**（load / list / delete / resume 均已支持）。
 - Agent preset 为进程级字段，会话内不可切换。
 - 会话列表用 `createdAt` 近似 `updatedAt`，暂不提供标题。
-- 仅基线 prompt（文本 + `resource_link`；图片/音频/embedded resource 会拒绝）。
+- 仅基线 prompt（文本 + `resource_link` + `image`；音频 / embedded resource 会拒绝）。图片经 `dsh-attachment` 持久化准入，见「识图」节。
 - 不回传会话标题等（仍属日志/演示层）；usage 与 todo 列表已分别通过 `usage_update` / `plan` 回传。
 - 单个 `cwd`，不支持 `mcpServers` 和 `additionalDirectories`。
 - `ask_user_question` 依赖客户端 `elicitation.form` 能力；不具备时工具报错而不是静默空答（见上）。

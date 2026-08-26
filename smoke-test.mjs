@@ -15,6 +15,10 @@ const clientToAgent = new TransformStream()
 let captured = null
 let resumed = null
 
+// Last slash-command dispatch arguments (images + signal) for image tests.
+let lastCommandImages = undefined
+let lastCommandSignal = undefined
+
 // Persisted sessions backing session/list·load·delete.
 const persisted = [
   { version: 0, id: 'persist-1', createdAt: 1700000000000, cwd: '/Users/a11111/code/dsh-acp' },
@@ -52,11 +56,13 @@ ctx.provide('agents', {
       id: sessionId,
       session,
       cancel() {},
-      followup() {
+      followup(message) {
         this.followedUp = true
+        this.lastMessage = message
       },
       whenIdle: async () => {},
       followedUp: false,
+      lastMessage: undefined,
     }
     captured = { sessionId, session, agent }
     return { agent, dispose: async () => {} }
@@ -95,11 +101,39 @@ ctx.provide('permissionPresets', {
 })
 ctx.provide('commands', {
   list: () => [{ name: 'compact', description: 'Compress the session', input: { hint: 'optional notes' } }],
-  execute: async (_agent, line) => {
+  execute: async (_agent, line, images, signal) => {
+    lastCommandImages = images
+    lastCommandSignal = signal
     if (String(line).trim().startsWith('/plan')) {
       return { commandId: 'cmd-plan', result: { kind: 'success', text: 'Plan mode on. Use /plan off to leave.' } }
     }
     return undefined
+  },
+})
+
+// Durable attachment seam (dsh-attachment): admits ACP image uploads and
+// returns references; the bridge must only ever send those references to the
+// model. `failAdmission` forces a caller-correctable admission rejection.
+let admittedImages = []
+let failAdmission = false
+ctx.provide('attachments', {
+  async saveImages(inputs) {
+    if (failAdmission) {
+      const error = new Error('image exceeds the per-image byte limit')
+      error.code = 'IMAGE_TOO_LARGE'
+      throw error
+    }
+    admittedImages = inputs.map((input) => ({
+      mediaType: input.mediaType,
+      bytes: input.data.byteLength,
+    }))
+    return inputs.map((input, i) => ({
+      attachmentId: `sha256:test-image-${i}`,
+      mediaType: input.mediaType,
+      bytes: input.data.byteLength,
+      width: 10,
+      height: 10,
+    }))
   },
 })
 ctx.provide('agentPresets', {
@@ -203,6 +237,15 @@ const init = await readFrame()
 console.log('initialize ->', JSON.stringify(init.result))
 check(init.result?.protocolVersion === 1, 'protocolVersion should be 1')
 check(init.result?.agentCapabilities?.loadSession === true, 'should advertise loadSession')
+check(
+  init.result?.agentCapabilities?.promptCapabilities?.image === true,
+  'should advertise the image prompt capability',
+)
+check(
+  init.result?.agentCapabilities?.promptCapabilities?.audio === false &&
+    init.result?.agentCapabilities?.promptCapabilities?.embeddedContext === false,
+  'audio and embeddedContext should stay off',
+)
 check(
   init.result?.agentCapabilities?.sessionCapabilities?.list !== undefined &&
     init.result?.agentCapabilities?.sessionCapabilities?.delete !== undefined,
@@ -783,6 +826,125 @@ const modelPromptResp = await readFrame()
 console.log('model prompt response ->', JSON.stringify(modelPromptResp.result))
 check(modelPromptResp.id === 32, 'non-command prompt should resolve')
 check(captured.agent.followedUp === true, 'non-command text should reach the model via followup')
+
+// 12. Image prompts: ACP image blocks are admitted through the durable
+// attachment seam before the message is created, and the message carries only
+// the durable references — in submission order, with text blocks preserved.
+const imageData = Buffer.from('fake-png-bytes').toString('base64')
+captured.agent.followedUp = false
+captured.agent.lastMessage = undefined
+await send({
+  jsonrpc: '2.0',
+  id: 41,
+  method: 'session/prompt',
+  params: {
+    sessionId,
+    prompt: [
+      { type: 'text', text: 'look at this: ' },
+      { type: 'image', mimeType: 'image/png', data: imageData },
+      { type: 'text', text: ' and this' },
+    ],
+  },
+})
+const imagePromptResp = await readFrame()
+console.log('image prompt response ->', JSON.stringify(imagePromptResp.result))
+check(imagePromptResp.id === 41 && imagePromptResp.error === undefined, 'image prompt should resolve')
+check(captured.agent.followedUp === true, 'image prompt should reach the model via followup')
+check(
+  admittedImages.length === 1 && admittedImages[0].mediaType === 'image/png',
+  'the image should be admitted through the attachment store',
+)
+const imageBlocks = captured.agent.lastMessage?.content?.filter((b) => b.type === 'image')
+check(imageBlocks?.length === 1, 'message should carry exactly one image block')
+check(
+  imageBlocks?.[0]?.attachment?.attachmentId === 'sha256:test-image-0' &&
+    imageBlocks[0].attachment.mediaType === 'image/png',
+  'image block should carry the durable reference, never the base64 upload',
+)
+const textParts = captured.agent.lastMessage?.content?.filter((b) => b.type === 'text')
+check(
+  textParts?.length === 2 && textParts[0].text === 'look at this: ' && textParts[1].text === ' and this',
+  'text blocks should keep their order around image blocks',
+)
+
+// 12b. An image-only prompt is a valid prompt (no text required).
+captured.agent.followedUp = false
+captured.agent.lastMessage = undefined
+await send({
+  jsonrpc: '2.0',
+  id: 42,
+  method: 'session/prompt',
+  params: {
+    sessionId,
+    prompt: [{ type: 'image', mimeType: 'image/jpeg', data: Buffer.from('jpeg-bytes').toString('base64') }],
+  },
+})
+const imageOnlyResp = await readFrame()
+console.log('image-only prompt response ->', JSON.stringify(imageOnlyResp.result))
+check(imageOnlyResp.id === 42 && imageOnlyResp.error === undefined, 'image-only prompt should be accepted')
+check(
+  captured.agent.lastMessage?.content?.filter((b) => b.type === 'image').length === 1,
+  'image-only prompt should carry one image block',
+)
+
+// 12c. An admission rejection is a caller-correctable input error
+// (invalidParams), not an internal failure.
+failAdmission = true
+await send({
+  jsonrpc: '2.0',
+  id: 43,
+  method: 'session/prompt',
+  params: { sessionId, prompt: [{ type: 'image', mimeType: 'image/png', data: imageData }] },
+})
+const admissionResp = await readFrame()
+console.log('admission rejection ->', JSON.stringify(admissionResp.error))
+check(admissionResp.id === 43, 'admission rejection should respond')
+check(
+  admissionResp.error?.code === -32602 && String(admissionResp.error?.message).includes('byte limit'),
+  'admission failure should map to invalidParams with the store message',
+)
+failAdmission = false
+
+// 12d. Unsupported content (audio, embedded resource) is still rejected.
+await send({
+  jsonrpc: '2.0',
+  id: 44,
+  method: 'session/prompt',
+  params: { sessionId, prompt: [{ type: 'audio', mimeType: 'audio/mp3', data: imageData }] },
+})
+const audioResp = await readFrame()
+check(audioResp.id === 44 && audioResp.error?.code === -32602, 'audio prompts should still be rejected')
+
+// 12e. A slash command with images hands the raw uploads to the command plane
+// (the command owns its own admission) and passes the abort signal through.
+captured.agent.followedUp = false
+captured.agent.lastMessage = undefined
+lastCommandImages = undefined
+lastCommandSignal = undefined
+await send({
+  jsonrpc: '2.0',
+  id: 45,
+  method: 'session/prompt',
+  params: {
+    sessionId,
+    prompt: [
+      { type: 'text', text: '/plan' },
+      { type: 'image', mimeType: 'image/png', data: imageData },
+    ],
+  },
+})
+const commandImageChunk = await readFrame()
+const commandImageResp = await readFrame()
+console.log('command with images response ->', JSON.stringify(commandImageResp.result))
+check(commandImageChunk.params?.update?.content?.text === 'Plan mode on. Use /plan off to leave.', 'command with images should surface its result text')
+check(commandImageResp.id === 45 && commandImageResp.result?.stopReason === 'end_turn', 'command with images should dispatch')
+check(commandImageResp.id === 45 && commandImageResp.result?.stopReason === 'end_turn', 'command with images should dispatch')
+check(
+  lastCommandImages?.length === 1 && lastCommandImages[0].mediaType === 'image/png' && lastCommandImages[0].data === imageData,
+  'command should receive the raw base64 upload, not a reference',
+)
+check(lastCommandSignal instanceof AbortSignal, 'command should receive the abort signal')
+check(captured.agent.followedUp === false, 'a command with images should not reach the model as input')
 
 console.log(failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures})`)
 process.exit(failures === 0 ? 0 : 1)

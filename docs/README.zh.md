@@ -21,7 +21,8 @@
 - **bash 终端** —— 命令输出以 terminal 内容呈现，含退出码
 - **上下文占用圆环** —— `usage_update`（used / size）驱动 IDE 的上下文指示器
 - **todo 列表** —— dsh 的 `todo_write` 快照以 `plan` 更新呈现在 IDE 的任务清单中，新回合开始时清空
-- **斜杠指令** —— 通过 `available_commands_update` 通告 dsh 的 `/` 指令
+- **识图** —— ACP `image` prompt 块（如截图）经 dsh 0.1.1 的持久化附件接口（`dsh-attachment`）准入后以 `ImageBlock` 交给模型；能力通告让 Zed 可以直接发送图片
+- **斜杠指令** —— 通过 `available_commands_update` 通告 dsh 的 `/` 指令，并在命令平面执行（接受图片的指令会收到原始上传）
 - **向用户提问** —— dsh 的 `ask_user_question` 工具通过 ACP 表单 elicitation 应答（选项 / 多选 / 自由文本）；客户端不具备 elicitation 能力时给出自解释回退
 
 ## 安装
