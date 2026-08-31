@@ -111,7 +111,7 @@
         default: standard
 
     - id: acp
-      name: 'dsh-acp'
+      name: '@cnctem/dsh-acp'
       config:
         provider: !!js process.env.DSH_ACP_PROVIDER
         model: !!js process.env.DSH_ACP_MODEL

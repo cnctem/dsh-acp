@@ -30,7 +30,7 @@
 要求：Node.js ≥ 20，已安装 `dsh`（基于 `dsh@0.1.1-rc.2` 开发），已安装 `pnpm`。
 
 ```bash
-dsh plugin --profile acp add github:cnctem/dsh-acp
+dsh plugin --profile acp add @cnctem/dsh-acp
 ```
 
 从源码安装：
@@ -39,6 +39,24 @@ dsh plugin --profile acp add github:cnctem/dsh-acp
 git clone https://github.com/cnctem/dsh-acp.git
 dsh plugin --profile acp add ./dsh-acp
 ```
+
+### 作为 npm 包使用
+
+`@cnctem/dsh-acp` 也可由 Node/Cordis 宿主直接 import。它是插件而非独立可执行程序；宿主必须先组合其 peer dependency 所需的 dsh 服务，再挂载该插件。
+
+```bash
+npm install @cnctem/dsh-acp
+```
+
+```js
+import * as acp from '@cnctem/dsh-acp'
+
+ctx.plugin(acp, { provider: 'deepseek-official', model: 'deepseek-v4-pro' })
+```
+
+## 开发
+
+源码位于 `src/`，TypeScript 将生成的 ESM、声明文件与 source map 写入并提交到 `lib/`。`pnpm run typecheck` 执行严格类型检查，`pnpm test` 执行协议 smoke test，发布前运行 `pnpm run verify`。
 
 ## 配置
 

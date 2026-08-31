@@ -167,9 +167,11 @@ preset 是**进程级部署字段**，不是会话选择器：由 `DSH_ACP_PRESE
 
 ```
 dsh-acp/
-  package.json          # dsh.bundle.patch 声明 + 依赖 + 仓库元信息
+  package.json          # dsh bundle / npm 发布元信息、入口和验证脚本
+  tsconfig.json         # strict NodeNext 编译配置（src -> lib）
   cordis.patch.yml      # bundle patch：persona、关闭 HMR、agent 平面迁到 preset、挂载 acp
-  lib/index.js          # ACP 服务端插件（apply/inject）
+  src/                  # TypeScript 源码：插件入口、bridge、协议映射、elicitation、类型
+  lib/                  # 已提交的编译 ESM、.d.ts 与 source map（npm/Git 安装直接运行）
   smoke-test.mjs        # 协议冒烟测试（mock 服务，不触模型栈 / $DSH_HOME）
   README.md             # 英文 README
   docs/
@@ -187,8 +189,15 @@ dsh --profile acp --dump-config | grep -A4 '"acp"'
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}' | dsh --profile acp
 
 # 跑协议冒烟测试（不触模型栈）
-node smoke-test.mjs
+pnpm test
+
+# strict 类型检查、编译、smoke 与生成物同步校验
+pnpm run verify
 ```
+
+## npm 安装
+
+注册表包名为 `@cnctem/dsh-acp`：dsh profile 用 `dsh plugin --profile acp add @cnctem/dsh-acp` 安装；普通 Cordis/dsh 宿主可 `npm install @cnctem/dsh-acp` 后以 `import * as acp from '@cnctem/dsh-acp'` 和 `ctx.plugin(acp, config)` 挂载。它不是独立 CLI，宿主必须先组合 `agents`、`agentDefaultModel` 和 peer dependency 对应的 dsh 服务。
 
 ## 参考
 

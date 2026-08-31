@@ -32,7 +32,7 @@ Built on the official [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/de
 Prerequisites: Node.js ≥ 20, `dsh` (developed against `dsh@0.1.1-rc.2`), `pnpm`.
 
 ```bash
-dsh plugin --profile acp add github:cnctem/dsh-acp
+dsh plugin --profile acp add @cnctem/dsh-acp
 ```
 
 From source:
@@ -41,6 +41,28 @@ From source:
 git clone https://github.com/cnctem/dsh-acp.git
 dsh plugin --profile acp add ./dsh-acp
 ```
+
+### Use as a package
+
+`@cnctem/dsh-acp` is also importable from a Node/Cordis host. It is a plugin,
+not a standalone executable: the host must compose the dsh services declared by
+its peer dependencies before mounting it.
+
+```bash
+npm install @cnctem/dsh-acp
+```
+
+```js
+import * as acp from '@cnctem/dsh-acp'
+
+ctx.plugin(acp, { provider: 'deepseek-official', model: 'deepseek-v4-pro' })
+```
+
+## Development
+
+Source lives in `src/` and TypeScript generates the committed ESM, declarations,
+and source maps in `lib/`. Run `pnpm run typecheck` for strict checking,
+`pnpm test` for the protocol smoke test, and `pnpm run verify` before publishing.
 
 ## Configuration
 
