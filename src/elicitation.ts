@@ -1,25 +1,33 @@
-import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
-import type { Agent as DshAgent } from '@deepseek-ai/dsh-agent'
-import type { AgentSideConnection, ElicitationContentValue } from '@agentclientprotocol/sdk'
-import type { AskUserQuestionAnswer, AskUserQuestionItem, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
-import type { SessionRecord } from './types.js'
+/** Stable ACP elicitation bridge for dsh's scoped user-question waterfall. */
 
-type CreateElicitationParams = Parameters<AgentSideConnection['unstable_createElicitation']>[0]
-type ElicitationResponse = Awaited<ReturnType<AgentSideConnection['unstable_createElicitation']>>
+import type {
+  AgentContext,
+  CreateElicitationRequest,
+  ElicitationContentValue,
+  ElicitationPropertySchema,
+  ElicitationSchema,
+} from '@agentclientprotocol/sdk'
+import { methods } from '@agentclientprotocol/sdk'
+import type { SessionId } from '@deepseek-ai/dsh-session'
+import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
+import type {
+  AskUserQuestionAnswer,
+  AskUserQuestionItem,
+  AskUserQuestionRequest,
+} from '@deepseek-ai/dsh-user-questions'
 
 interface ElicitationBridgeOptions {
-  connection(): AgentSideConnection
+  connection(): AgentContext
   supportsForm(): boolean
-  ownedRecord(agent: DshAgent): SessionRecord | undefined
 }
 
 interface ElicitationPayload {
   message: string
-  requestedSchema: Record<string, unknown>
+  requestedSchema: ElicitationSchema
 }
 
 function buildQuestionElicitation(questions: readonly AskUserQuestionItem[]): ElicitationPayload {
-  const properties: Record<string, unknown> = {}
+  const properties: NonNullable<ElicitationSchema['properties']> = {}
   const required: string[] = []
   for (const question of questions) {
     const options = question.options ?? []
@@ -28,16 +36,16 @@ function buildQuestionElicitation(questions: readonly AskUserQuestionItem[]): El
       properties[question.id] = {
         ...base,
         type: 'array',
-        items: { type: 'string', enum: options.map((option) => option.label) },
-      }
+        items: { type: 'string', enum: options.map(option => option.label) },
+      } as ElicitationPropertySchema
     } else if (options.length > 0) {
       properties[question.id] = {
         ...base,
         type: 'string',
-        oneOf: options.map((option) => ({ const: option.label, title: option.label })),
-      }
+        oneOf: options.map(option => ({ const: option.label, title: option.label })),
+      } as ElicitationPropertySchema
     } else {
-      properties[question.id] = { ...base, type: 'string' }
+      properties[question.id] = { ...base, type: 'string' } as ElicitationPropertySchema
       required.push(question.id)
       continue
     }
@@ -45,7 +53,7 @@ function buildQuestionElicitation(questions: readonly AskUserQuestionItem[]): El
       type: 'string',
       title: 'Other',
       description: 'Type your own answer instead of choosing an option above.',
-    }
+    } as ElicitationPropertySchema
   }
   return {
     message: questions.length === 1 ? questions[0].question : `Input requested (${questions.length} questions)`,
@@ -85,70 +93,79 @@ function convertElicitationAnswers(
   return answers
 }
 
-function askElicitation(
-  connection: AgentSideConnection,
-  params: CreateElicitationParams,
-  signal: AbortSignal | undefined,
-): Promise<ElicitationResponse> {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const settle = <T>(fn: (value: T) => void, value: T) => {
-      if (settled) return
-      settled = true
-      fn(value)
-    }
-    const onAbort = () =>
-      settle(reject, new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED'))
-    signal?.addEventListener('abort', onAbort, { once: true })
-    connection.unstable_createElicitation(params).then(
-      (response) => settle(resolve, response),
-      (error: unknown) => settle(reject, error),
-    )
-  })
+function elicitationRequest(
+  sessionId: SessionId,
+  callId: string | undefined,
+  payload: ElicitationPayload,
+): CreateElicitationRequest {
+  return {
+    sessionId,
+    mode: 'form',
+    ...(callId === undefined ? {} : { toolCallId: callId }),
+    message: payload.message,
+    requestedSchema: payload.requestedSchema,
+  }
 }
 
-export function createElicitationProvider(options: ElicitationBridgeOptions) {
-  return async function askViaAcp(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> {
-    const record = request.agent === undefined ? undefined : options.ownedRecord(request.agent)
-    if (record === undefined) {
-      throw new UserQuestionError('human interaction is unavailable for this agent', 'CALLER_NOT_LIVE')
-    }
-    if (!options.supportsForm()) {
-      throw new UserQuestionError(
-        'the ACP client does not support user questions (missing elicitation capability); include the unresolved question or decision in your final result',
-        'ELICITATION_UNSUPPORTED',
-      )
-    }
-    const { message, requestedSchema } = buildQuestionElicitation(request.questions)
-    const toolCallId = record.questionCallIds.shift()
-    let response: ElicitationResponse
-    try {
-      response = await askElicitation(
-        options.connection(),
-        {
-          sessionId: record.agent.session.id,
-          ...(toolCallId === undefined ? {} : { toolCallId }),
-          mode: 'form',
-          message,
-          requestedSchema,
-        } as CreateElicitationParams,
-        request.signal,
-      )
-    } catch (error) {
-      if (String(error).includes('elicitation/create')) {
-        throw new UserQuestionError(
-          'the ACP client does not support user questions (elicitation/create failed); include the unresolved question or decision in your final result',
-          'ELICITATION_UNSUPPORTED',
-        )
-      }
-      throw error
-    }
-    if (response.action === 'accept') {
-      return { answers: convertElicitationAnswers(request.questions, response.content ?? {}) }
-    }
-    if (response.action === 'decline') {
-      throw new UserQuestionError('the user declined ask_user_question', 'ASK_CANCELLED')
-    }
-    throw new UserQuestionError('the user cancelled ask_user_question', 'ASK_CANCELLED')
+/** Translate one dsh user-question request into a stable ACP form elicitation. */
+export async function askViaAcp(
+  options: ElicitationBridgeOptions,
+  request: AskUserQuestionRequest,
+  sessionId: SessionId,
+): Promise<AskUserQuestionAnswer> {
+  if (!options.supportsForm()) {
+    throw new UserQuestionError(
+      'the ACP client does not support user questions (missing elicitation capability); include the unresolved question or decision in your final result',
+      'ELICITATION_UNSUPPORTED',
+    )
   }
+  const payload = buildQuestionElicitation(request.questions)
+  const params = elicitationRequest(sessionId, request.wait?.callId, payload)
+  let response
+  try {
+    response = await withAbort(
+      options.connection().request(methods.client.elicitation.create, params),
+      request.signal,
+    )
+  } catch (error: unknown) {
+    if (error instanceof UserQuestionError) throw error
+    const detail = error instanceof Error ? error.message : String(error)
+    if (/method not found|-32601/iu.test(detail)) {
+      throw new UserQuestionError(
+        'the ACP client does not implement elicitation/create; include the unresolved question or decision in your final result',
+        'ELICITATION_UNSUPPORTED',
+        { cause: error },
+      )
+    }
+    throw error
+  }
+  if (response.action !== 'accept') {
+    throw new UserQuestionError('the user declined or cancelled the question', 'ASK_CANCELLED')
+  }
+  const content = (response.content ?? {}) as Record<string, ElicitationContentValue>
+  return { answers: convertElicitationAnswers(request.questions, content) }
+}
+
+function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return promise
+  if (signal.aborted) {
+    return Promise.reject(new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED'))
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort)
+      reject(new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
 }

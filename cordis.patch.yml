@@ -1,118 +1,92 @@
-# dsh-acp bundle patch: an ACP (Agent Client Protocol) JSON-RPC stdio server
-# that rides directly over dsh-base. It mounts no HTTP server, Web runtime, or
-# browser plugin, and keeps stdout reserved for ACP frames (diagnostics go to
-# stderr through ctx.logger).
-#
-# The ACP plugin creates one fresh Agent per `session/new`, drives each prompt
-# to quiescence, streams committed assistant text as `agent_message_chunk`, and
-# answers bridge-owned approval requests through one-shot client permissions.
+# dsh-acp profile bundle: a Zed/editor-oriented ACP bridge over dsh-base.
+# It replaces the shipped automation-only ACP row when composed after dsh-acp-app,
+# while the unique startup row also keeps standalone base-backed profiles working.
 
-# Give the agent a coding persona (fallback; each preset's own persona shadows
-# this when agent presets are mounted). {{model}} and {{cwd}} are resolved by
-# dsh-system-prompt.
+# Fallback persona for deployments that do not mount an agent preset.
 - id: system-prompt
   config:
-    persona: >-
-      You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}.
-      Your bash tool runs under a file sandbox — a `[sandbox: file access denied …]` result is
-      policy, not a command bug. Verify your work by running the code or tests. Keep answers brief and factual.
+    personaSuffix: Your working directory is {{cwd}}.
+    personaPrefix: >-
+      You are a coding assistant powered by the {{model}} model.
 
-# The shared module-reload HMR row stays off; a file watcher has no place in a
-# stdio protocol server and would add noise while running.
+# Stdio protocol servers do not participate in module reloads.
 - id: hmr
   disabled: true
+- id: session-title-llm
+  disabled: true
 
-# ── the agent plane moves behind agent presets ─────────────────────────────
-#
-# The base keeps every model-facing row (tools, prompt sections, delegation
-# backends) on the HOST plane for the single-session TUI. The ACP server is
-# multi-session and lets each session mount one of the four agent presets
-# (standard / minimal) instead, so those rows are disabled here
-# and provided by each preset's own standing composition. The registries and
-# infra (sandbox, approval, persistence, model route, subagent registry,
-# skill/tool registries) stay on the host plane.
-
+# The model-facing agent plane comes from a declared preset. Host infrastructure
+# (sandbox, approval, persistence, LLM routes, MCP resources) stays global.
 - id: tool-bash
   disabled: true
-
 - id: tool-pwsh
   disabled: true
-
 - id: tool-jobs
   disabled: true
-
 - id: tool-fs
   disabled: true
-
 - id: tool-fs-search
   disabled: true
-
-- id: tool-str-replace-editor
-  disabled: true
-
 - id: skill-filesystem
   disabled: true
-
 - id: tool-skill
   disabled: true
-
 - id: tool-goal
   disabled: true
-
 - id: plan-mode
   disabled: true
-
 - id: compaction-basic
   disabled: true
-
 - id: command-compact
   disabled: true
-
 - id: tool-result-pruner
   disabled: true
-
 - id: tool-subagent-control
   disabled: true
-
 - id: tool-subagent-list-agents
   disabled: true
-
 - id: tool-subagent
   disabled: true
-
 - id: tool-subagent-fork
   disabled: true
-
-- id: workflow-worker-thread
-  disabled: true
-
 - id: tool-workflow
   disabled: true
-
 - id: tool-ralph
   disabled: true
-
 - id: agent-instructions
   disabled: true
-
 - id: tool-todo
   disabled: true
-
 - id: tool-web
   disabled: true
 
-# The preset roster. The CLI auto-injects the shipped system root
-# (`config/agent-presets/` beside the installed app); the harness-home user
-# root (`$DSH_HOME/.agent-presets`) is included by default.
+# Disable the shipped automation bridge and startup under their original ids.
+# Missing rows warn harmlessly in legacy base-only profiles.
+- id: acp-app-startup
+  disabled: true
+- id: acp
+  disabled: true
+
 - insert:
-    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
+    - id: agent-preset-registry
+      name: '@deepseek-ai/dsh-agent-preset-registry'
       config:
         default: standard
 
-    - id: acp
+    # Host-plane providers required by the cordis/creation preset.
+    - id: cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'
+    - id: cordis-inspect-providers
+      name: '@deepseek-ai/dsh-tool-cordis/host'
+
+    # Reuse dsh's command-line/stdin-lifetime provider under a unique id.
+    - id: acp-editor-startup
+      name: '@deepseek-ai/dsh-acp-app'
+
+    - id: acp-editor
       name: '@cnctem/dsh-acp'
+      inject: [acpAppStartup]
       config:
         provider: !!js process.env.DSH_ACP_PROVIDER
         model: !!js process.env.DSH_ACP_MODEL
-        preset: !!js process.env.DSH_ACP_PRESET ?? 'standard'
+        preset: !!js process.env.DSH_ACP_PRESET

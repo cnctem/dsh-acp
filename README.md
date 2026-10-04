@@ -4,32 +4,34 @@
 
 > [简体中文](docs/README.zh.md) · [技术文档 / Technical notes](docs/technical.md)
 
-An **Agent Client Protocol (ACP)** server for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) that lets [Zed](https://zed.dev) and other IDEs drive dsh agents over **JSON-RPC 2.0 stdio**.
+An **Agent Client Protocol (ACP)** server for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) that lets [Zed](https://zed.dev) and other editors drive dsh agents over **JSON-RPC 2.0 stdio**.
 
-Built on the official [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) skeleton as a dsh **profile bundle** over `dsh-base`, and extended with the editor experience of [`pi-acp`](https://github.com/svkozak/pi-acp).
+The shipped dsh `acp` profile is intentionally automation-only. This bundle is a drop-in replacement for its bridge: it keeps the standard automation surface (sessions, MCP, model selection, permissions) and adds the editor experience Zed needs on top.
 
 ## Introduction
 
-`dsh-acp` mounts an ACP server on dsh's stdin/stdout. Zed launches `dsh --profile acp` and speaks ACP JSON-RPC over stdio; the plugin translates `session/*` requests into dsh agent lifecycles. No dsh modification required.
+`dsh-acp` mounts one ACP server on dsh stdin/stdout. Zed launches `dsh --profile acp`; the plugin translates `session/*` requests into dsh Agent lifecycles. Installing this bundle requires no Zed configuration change because it disables both the shipped `acp` bridge and startup row, then mounts this implementation and the same stdin-lifetime provider under unique ids.
 
 ## Features
 
-- **Token & thinking streaming** — `agent_message_chunk` / `agent_thought_chunk`
+- **Standard ACP lifecycle** — `initialize`, `session/new`, `session/list`, `session/resume`, `session/close`, `session/prompt`, and `session/cancel`
+- **Editor history extensions** — `session/load` replays durable history; `session/delete` closes a live session and removes its persisted artifact when the backend exposes deletion
+- **Token & thinking streaming** — `agent/assistant-stream` frames projected as `agent_message_chunk` / `agent_thought_chunk`
 - **Tool cards** — `tool_call` / `tool_call_update` with kind, file location and line
-- **Structured diffs** — edit/write hunks plus before/after snapshots
-- **Session history** — `session/list` · `session/load` · `session/delete`
-- **Session selectors** — write permission (3) · model · thinking strength
-- **Agent presets** — deployment-wide preset selection via `DSH_ACP_PRESET`: the built-in `standard` / `minimal` modes (other modes need global mounting in the profile, see Configuration), plus any preset you author under `$DSH_HOME/.agent-presets/`
+- **Structured diffs** — native tool hunks plus before/after file snapshots
 - **Bash terminal** — command output rendered as terminal content with exit code
-- **Context-usage ring** — `usage_update` (used / size) feeds the IDE's context indicator
-- **Todo list** — dsh's `todo_write` snapshots rendered as the IDE's plan checklist (`plan` update), cleared when a new turn begins
-- **Image understanding** — ACP `image` prompt blocks (e.g. screenshots) admitted through dsh 0.1.1's durable attachment seam (`dsh-attachment`) and fed to the model as `ImageBlock`s, with a capability advertisement that lets Zed send images
-- **Slash commands** — dsh's `/` commands advertised via `available_commands_update`, executed in the command plane (images handed to commands that accept them)
-- **Ask the user** — dsh's `ask_user_question` tool answered through ACP form elicitation (options, multi-select, free text), with a self-explaining fallback for clients without the elicitation capability
+- **Context-usage ring** — `usage_update` (used / size)
+- **Todo list** — dsh `todo_write` snapshots rendered as the stable ACP `plan` update
+- **Images** — ACP image prompts admitted through the durable attachment seam; capability advertised only when the resolved route supports images
+- **Slash commands** — dsh commands advertised through `available_commands_update`; recognized commands stay in the command plane and receive typed image attachments
+- **Ask the user** — dsh's scoped `user-questions/request` waterfall answered through stable ACP form `elicitation/create`
+- **Agent presets** — `standard`, `ptc`, `minimal`, and `cordis` (creation mode) are declared by this bundle and selected for the whole process through `DSH_ACP_PRESET`
+- **MCP servers** — client-supplied stdio and Streamable HTTP MCP servers are validated and mounted into the Agent scope
+- **Turn-pinned model selection** — model and reasoning changes affect later prompts; an in-flight turn keeps the route with which it was admitted
 
 ## Installation
 
-Prerequisites: Node.js ≥ 20, `dsh` (developed against `dsh@0.1.1-rc.2`), `pnpm`.
+Prerequisites: Node.js `^22.19.0 || >=24.0.0`, `dsh@0.2.0-rc.2`, and `pnpm`.
 
 ```bash
 dsh plugin --profile acp add @cnctem/dsh-acp
@@ -39,41 +41,43 @@ From source:
 
 ```bash
 git clone https://github.com/cnctem/dsh-acp.git
-dsh plugin --profile acp add ./dsh-acp
+cd dsh-acp
+pnpm install
+pnpm run build
+dsh plugin --profile acp add .
 ```
+
+Existing installs upgrade with the same command; the effective `acp` profile now contains the custom bridge instead of the automation-only bridge.
 
 ### Use as a package
 
-`@cnctem/dsh-acp` is also importable from a Node/Cordis host. It is a plugin,
-not a standalone executable: the host must compose the dsh services declared by
-its peer dependencies before mounting it.
-
-```bash
-npm install @cnctem/dsh-acp
-```
+`@cnctem/dsh-acp` is also importable from a Node/Cordis host. It is a plugin, not a standalone executable: the host must compose the dsh services required by its dependencies and peers before mounting it.
 
 ```js
 import * as acp from '@cnctem/dsh-acp'
 
-ctx.plugin(acp, { provider: 'deepseek-official', model: 'deepseek-v4-pro' })
+ctx.plugin(acp, {
+  provider: 'deepseek-official',
+  model: 'deepseek-v4-pro',
+  preset: 'standard',
+})
 ```
-
-## Development
-
-Source lives in `src/` and TypeScript generates the committed ESM, declarations,
-and source maps in `lib/`. Run `pnpm run typecheck` for strict checking,
-`pnpm test` for the protocol smoke test, and `pnpm run verify` before publishing.
 
 ## Configuration
 
-- Model/provider defaults to dsh's default model; override via `DSH_ACP_PROVIDER` / `DSH_ACP_MODEL` (or edit the `acp` row in `$DSH_HOME/profiles/acp/cordis.patch.yml`).
-- Agent preset via `DSH_ACP_PRESET` — an optional field whose value directly names the preset mounted for every session: the value **is** the preset id, no roster constraint on your side. Unset or empty → `standard`; a value naming no existing preset fails session creation with an error. Valid ids are the shipped `standard` / `minimal` presets, plus any preset you author under `$DSH_HOME/.agent-presets/<id>/` (the user root is a preset root by default).
-- The `code` (PTC) and `cordis` (creation) presets are not in `dsh-base`. They need the `code-runtime` and `cordis-host-runner` plugins installed globally (in the profile's `cordis.patch.yml`), after which you can pick `code` / `cordis` via `DSH_ACP_PRESET` like any other preset.
-- API key reuses dsh credentials (`$DSH_HOME/.credentials.yaml` or `DEEPSEEK_API_KEY`).
+- `DSH_ACP_PROVIDER` / `DSH_ACP_MODEL` override the default provider/model. Unset values follow dsh `agent-default-model`.
+- `DSH_ACP_PRESET` selects the process-level agent composition. Unset or empty uses the registry default, `standard`.
+- Built-in presets:
+  - `standard` — coding tools, plan mode, todos, web, subagents.
+  - `ptc` — standard tools plus presentation/code-runtime behavior.
+  - `minimal` — a persistent shell and minimal persona.
+  - `cordis` — creation mode with plugin-manager and Cordis inspection tools plus the bundled authoring skills.
+- The old `$DSH_HOME/.agent-presets/<id>` directory scan is no longer supported. Presets are ordinary `@deepseek-ai/dsh-agent-preset` declarations in this bundle and can be overridden by a later profile patch.
+- API keys reuse dsh credentials (`$DSH_HOME/.credentials.yaml`, account auth, or `DEEPSEEK_API_KEY`).
 
 ## Integration
 
-Add to Zed's `settings.json`:
+Add to Zed's `settings.json` if the entry does not already exist:
 
 ```json
 {
@@ -88,25 +92,23 @@ Add to Zed's `settings.json`:
 }
 ```
 
-Restart Zed and pick `dsh`. Fix a model or preset via `env` (`DSH_ACP_PRESET` directly names the preset to mount — empty → `standard`, unknown id → session error; `standard` / `minimal` work out of the box, and globally installed presets are supported too):
+To expose multiple deployments, use separate Zed entries with different `DSH_ACP_PRESET` values. Each dsh process has one process-level preset selection.
 
-```json
-{
-  "agent_servers": {
-    "dsh-minimal": {
-      "type": "custom",
-      "command": "dsh",
-      "args": ["--profile", "acp"],
-      "env": { "DSH_ACP_PRESET": "minimal" }
-    }
-  }
-}
+## Development
+
+Source lives in `src/`; TypeScript generates committed ESM, declarations, and source maps in `lib/`.
+
+```bash
+pnpm run typecheck
+pnpm test              # hermetic in-process protocol smoke
+pnpm run test:profile  # real dsh profile acceptance in a temporary DSH_HOME
+pnpm run verify        # typecheck + smoke + generated-lib freshness
 ```
 
-Zed also supports multiple entries for the same acp, so different presets can coexist as separate entries in the "+" menu.
+`pnpm run test:profile` requires a working `dsh` executable. Set `DSH_BIN` to test another binary.
 
 ## Acknowledgements
 
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and its [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) example
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and its [`@deepseek-ai/dsh-acp`](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) implementation
 - [`pi-acp`](https://github.com/svkozak/pi-acp) — the reference for the richer editor experience
-- [Agent Client Protocol](https://agentclientprotocol.com) and [Zed](https://zed.dev)
+- [Agent Client Protocol](https://agentclientprotocol.com), [Zed](https://zed.dev), and the ACP community
