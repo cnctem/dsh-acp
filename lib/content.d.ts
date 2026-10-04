@@ -19,13 +19,14 @@ export declare class AcpContentError extends Error {
 }
 /**
  * Determine whether initialization may truthfully advertise inline image prompts.
- * Unknown service, route, capability, or deployment media support is negative.
+ * A connection accepts images when the attachment store handles a raster format and
+ * any selectable model route declares image input; the client may switch models after
+ * initialization, so the exact pinned route is validated again per prompt. Unknown
+ * service, catalog, or deployment media support is negative.
  * @param ctx - bridge context carrying optional attachment and model services.
- * @param provider - configured provider route used for newly created sessions.
- * @param model - configured exact model id used for newly created sessions.
- * @returns whether this bridge can admit images at initialization time.
+ * @returns whether at least one selectable route can admit images.
  */
-export declare function supportsAcpImagePrompts(ctx: Context, provider: string | undefined, model: string | undefined): Promise<boolean>;
+export declare function supportsAcpImagePrompts(ctx: Context): Promise<boolean>;
 /** Project command text while retaining image blocks for command attachment admission. */
 export declare function acpPromptToText(prompt: readonly AcpContentBlock[]): string;
 /** Convert ACP image blocks into the command plane's encoded-image attachment shape. */
@@ -42,7 +43,7 @@ export declare function acpPromptToCommandAttachments(prompt: readonly AcpConten
  * @param ctx - bridge context carrying attachment and model services.
  * @param route - selection pinned to the accepted prompt.
  * @param prompt - untrusted ACP prompt blocks in wire order.
- * @param imageEnabled - capability result advertised during initialization.
+ * @param imageEnabled - connection-level capability advertised during initialization.
  * @param signal - admission cancellation signal.
  * @returns core content with durable image references in wire order.
  */

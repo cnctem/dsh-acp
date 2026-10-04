@@ -202,7 +202,7 @@ export function apply(ctx: Context, config: AcpConfig = {}): void {
       // Single-version agent: the spec's "same version if supported, else
       // the latest supported" both resolve to this server's one version.
       clientCapabilities = params.clientCapabilities ?? null
-      imagePromptEnabled = await supportsAcpImagePrompts(ctx, initialSelection?.provider, initialSelection?.model)
+      imagePromptEnabled = await supportsAcpImagePrompts(ctx)
       return {
         protocolVersion: PROTOCOL_VERSION,
         agentInfo: { name: 'dsh-acp', version: '0.2.0-rc.2' },

@@ -7,6 +7,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { ndJsonStream } from '@agentclientprotocol/sdk'
 import { apply } from './lib/index.js'
+import { supportsAcpImagePrompts } from './lib/content.js'
 import { askViaAcp } from './lib/elicitation.js'
 import { mountAcpMcpServers } from './lib/mcp.js'
 
@@ -121,8 +122,8 @@ ctx.provide('agentDefaultModel', {
 ctx.provide('llm', {
   listProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek' }],
   listModels: async () => [
-    { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
-    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
+    { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', inputModalities: ['text', 'image'] },
+    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', inputModalities: ['text', 'image'] },
   ],
   resolveModelInfo: async (_provider, model) => ({
     inputModalities: ['text', 'image'],
@@ -457,6 +458,47 @@ check(elicited?.requestedSchema?.properties?.choice?.oneOf?.length === 2, 'singl
 check(elicited?.requestedSchema?.required?.includes('note'), 'free-text question is required')
 check(answer.answers?.[0]?.selected?.[0] === 'standard', 'selected option converted')
 check(answer.answers?.[1]?.custom === 'details', 'free-text answer converted')
+
+// 12. Connection-level image capability scans every selectable route
+function imageCtx({ mediaTypes = ['image/png'], providers = [{ id: 'p' }], models = {} } = {}) {
+  const scope = new Context()
+  scope.provide('attachments', { imageLimits: { mediaTypes } })
+  scope.provide('llm', {
+    listProviders: () => providers,
+    listModels: async (provider) => {
+      const result = models[provider]
+      if (result instanceof Error) throw result
+      return result ?? []
+    },
+  })
+  return scope
+}
+
+check(
+  await supportsAcpImagePrompts(imageCtx({
+    providers: [{ id: 'text-first' }, { id: 'vision-later' }],
+    models: {
+      'text-first': [{ id: 't', name: 'T', inputModalities: ['text'] }],
+      'vision-later': [{ id: 'v', name: 'V', inputModalities: ['text', 'image'] }],
+    },
+  })),
+  'image capability is connection-level: a non-default image route enables it',
+)
+check(
+  !await supportsAcpImagePrompts(imageCtx({ models: { p: [{ id: 't', name: 'T', inputModalities: ['text'] }] } })),
+  'image capability off when every route is text-only',
+)
+check(
+  !await supportsAcpImagePrompts(imageCtx({
+    mediaTypes: ['application/pdf'],
+    models: { p: [{ id: 'v', name: 'V', inputModalities: ['text', 'image'] }] },
+  })),
+  'image capability off when the attachment store rejects raster formats',
+)
+check(
+  !await supportsAcpImagePrompts(imageCtx({ providers: [{ id: 'broken' }], models: { broken: new Error('no catalog') } })),
+  'image capability off when no provider catalog resolves',
+)
 
 console.log(failures === 0 ? 'SMOKE TEST PASSED' : `SMOKE TEST FAILED (${failures})`)
 process.exit(failures === 0 ? 0 : 1)

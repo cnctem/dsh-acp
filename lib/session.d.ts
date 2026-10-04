@@ -96,7 +96,7 @@ export declare class AcpSession {
     /**
      * Admit, enqueue, and settle one prompt at whole-Agent quiescence.
      * @param params - standard ACP prompt request for this session.
-     * @param imageEnabled - connection capability advertised at initialization.
+     * @param imageEnabled - connection-level capability advertised at initialization.
      * @param requestSignal - JSON-RPC request cancellation signal.
      * @returns the correlated standard stop reason after ordered updates drain.
      */

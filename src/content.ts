@@ -80,27 +80,27 @@ async function assertImageRoute(ctx: Context, route: ModelSelection | undefined,
 
 /**
  * Determine whether initialization may truthfully advertise inline image prompts.
- * Unknown service, route, capability, or deployment media support is negative.
+ * A connection accepts images when the attachment store handles a raster format and
+ * any selectable model route declares image input; the client may switch models after
+ * initialization, so the exact pinned route is validated again per prompt. Unknown
+ * service, catalog, or deployment media support is negative.
  * @param ctx - bridge context carrying optional attachment and model services.
- * @param provider - configured provider route used for newly created sessions.
- * @param model - configured exact model id used for newly created sessions.
- * @returns whether this bridge can admit images at initialization time.
+ * @returns whether at least one selectable route can admit images.
  */
-export async function supportsAcpImagePrompts(
-  ctx: Context,
-  provider: string | undefined,
-  model: string | undefined,
-): Promise<boolean> {
+export async function supportsAcpImagePrompts(ctx: Context): Promise<boolean> {
   const attachments = ctx.get('attachments')
   const llm = ctx.get('llm')
-  if (attachments === undefined || llm === undefined || provider === undefined || model === undefined) return false
+  if (attachments === undefined || llm === undefined) return false
   if (!attachments.imageLimits.mediaTypes.some(mediaType => IMAGE_MEDIA_TYPES.includes(mediaType))) return false
-  try {
-    const info = await llm.resolveModelInfo(provider, model)
-    return info.inputModalities?.includes('image') === true
-  } catch {
-    return false
+  for (const provider of llm.listProviders()) {
+    try {
+      const models = await llm.listModels(provider.id)
+      if (models.some(model => model.inputModalities?.includes('image') === true)) return true
+    } catch (_providerCatalogUnavailable) {
+      // A provider without a usable catalog cannot contribute an image route.
+    }
   }
+  return false
 }
 
 /** Render one baseline resource link into the core's current text vocabulary. */
@@ -136,7 +136,7 @@ export function acpPromptToCommandAttachments(
  * @param ctx - bridge context carrying attachment and model services.
  * @param route - selection pinned to the accepted prompt.
  * @param prompt - untrusted ACP prompt blocks in wire order.
- * @param imageEnabled - capability result advertised during initialization.
+ * @param imageEnabled - connection-level capability advertised during initialization.
  * @param signal - admission cancellation signal.
  * @returns core content with durable image references in wire order.
  */

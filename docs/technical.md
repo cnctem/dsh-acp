@@ -134,8 +134,8 @@ presets/cordis.patch.yml
 
 图片 prompt：
 
-- `initialize` 根据默认/部署 route 和 attachment service 动态决定 `image` capability。
-- 准入时再次解析精确 route，要求其 `inputModalities` 包含 image。
+- `initialize` 扫描 attachment service 与全部已注册 provider catalog：只要任一可选 route 的 `inputModalities` 含 image，就通告 `image` capability（连接级，客户端之后可能切换模型）。
+- 准入时用本次 prompt 实际固定的 route 再次解析，要求其 `inputModalities` 包含 image；默认模型为纯文本时，切到视觉模型后仍可发图。
 - 图片先经 attachment `saveImages` 持久化；Agent message 只包含 attachment reference。
 - 非法 MIME、非 canonical base64、超限批次或不可用附件均返回 caller-correctable error。
 

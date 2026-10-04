@@ -22,7 +22,7 @@ The shipped dsh `acp` profile is intentionally automation-only. This bundle is a
 - **Bash terminal** — command output rendered as terminal content with exit code
 - **Context-usage ring** — `usage_update` (used / size)
 - **Todo list** — dsh `todo_write` snapshots rendered as the stable ACP `plan` update
-- **Images** — ACP image prompts admitted through the durable attachment seam; capability advertised only when the resolved route supports images
+- **Images** — ACP image prompts admitted through the durable attachment seam; capability advertised when any selectable route supports images, and the exact pinned route is validated per prompt
 - **Slash commands** — dsh commands advertised through `available_commands_update`; recognized commands stay in the command plane and receive typed image attachments
 - **Ask the user** — dsh's scoped `user-questions/request` waterfall answered through stable ACP form `elicitation/create`
 - **Agent presets** — `standard`, `ptc`, `minimal`, and `cordis` (creation mode) are declared by this bundle and selected for the whole process through `DSH_ACP_PRESET`

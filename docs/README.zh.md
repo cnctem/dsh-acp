@@ -20,7 +20,7 @@
 - **bash 终端** —— 命令输出以 terminal 内容呈现，含退出码
 - **上下文占用圆环** —— `usage_update`（used / size）
 - **todo 列表** —— dsh `todo_write` 快照映射为稳定的 ACP `plan` 更新
-- **图片** —— ACP image prompt 经持久化附件接口准入；仅在当前路由声明支持图片时通告能力
+- **图片** —— ACP image prompt 经持久化附件接口准入；只要任一可选路由声明支持图片就通告能力，并在每次 prompt 时校验实际固定的路由
 - **斜杠指令** —— 通过 `available_commands_update` 通告 dsh 指令；已识别指令留在命令平面执行，并接收类型化图片附件
 - **向用户提问** —— dsh 的 scoped `user-questions/request` waterfall 通过稳定 ACP form `elicitation/create` 应答
 - **Agent preset** —— 内置 `standard`、`ptc`、`minimal`、`cordis`（创造模式），由 `DSH_ACP_PRESET` 做进程级选择
