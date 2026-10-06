@@ -272,7 +272,12 @@ export class AcpSession {
    */
   async setConfig(configId: string, value: unknown, signal?: AbortSignal): Promise<SessionConfigOption[]> {
     this.assertActive()
-    if (configId !== 'permission') return this.modelControl.set(configId, value, signal)
+    if (configId !== 'permission') {
+      // The response must carry the FULL option set (the ACP schema's words),
+      // so a model/thought_level switch cannot drop the permission selector.
+      const modelOptions = await this.modelControl.set(configId, value, signal)
+      return this.allConfigOptions(signal, modelOptions)
+    }
     if (typeof value !== 'string') throw invalidParams('permission requires a select value')
     const permissions = this.ctx.get('permissionPresets') as PermissionPresetsLike | undefined
     const sandbox = this.ctx.get('sandboxPolicy') as SandboxPolicyLike | undefined
@@ -286,10 +291,13 @@ export class AcpSession {
     return this.allConfigOptions(signal)
   }
 
-  private async allConfigOptions(signal?: AbortSignal): Promise<SessionConfigOption[]> {
-    const modelOptions = await this.modelControl.options(signal)
+  private async allConfigOptions(
+    signal?: AbortSignal,
+    modelOptions?: SessionConfigOption[],
+  ): Promise<SessionConfigOption[]> {
+    const models = modelOptions ?? await this.modelControl.options(signal)
     const permission = this.permissionOption()
-    return permission === undefined ? modelOptions : [permission, ...modelOptions]
+    return permission === undefined ? models : [permission, ...models]
   }
 
   private permissionOption(): SessionConfigOption | undefined {

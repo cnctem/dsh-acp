@@ -319,6 +319,9 @@ check(permissionResponse.result?.configOptions?.find((option) => option.id === '
 await send({ jsonrpc: '2.0', id: 7, method: 'session/set_config_option', params: { sessionId, configId: 'model', value: JSON.stringify(['deepseek-official', 'deepseek-v4-flash']) } })
 const modelResponse = await response(7)
 check(modelResponse.result?.configOptions?.find((option) => option.id === 'model')?.currentValue?.includes('deepseek-v4-flash'), 'model selector updates')
+// The response must carry the full option set, so a model switch cannot hide
+// the permission selector from the client.
+check(modelResponse.result?.configOptions?.some((option) => option.id === 'permission'), 'model switch keeps the permission selector advertised')
 
 // 7. slash commands stay in the command plane and receive raw image attachments
 const imageData = Buffer.from('smoke-image').toString('base64')
